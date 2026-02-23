@@ -1,0 +1,7 @@
+# hosts.txt — backup hosts
+# Format: hostname or hostname:wsl
+setup2
+setup3
+setup7
+ephys3:wsl
+ephys7:wsl

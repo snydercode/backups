@@ -1,0 +1,2 @@
+/mnt/d/data:/mnt/e/data
+/mnt/d/data:/mnt/f/data
