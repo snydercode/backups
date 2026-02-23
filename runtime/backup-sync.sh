@@ -137,7 +137,7 @@ run_backup() {
     # Write result file for status checks
     {
         echo "last_run_epoch=$end_time"
-        echo "last_run_date=$(date -d "@$end_time" '+%Y-%m-%d %H:%M:%S')"
+        echo "last_run_date=\"$(date -d "@$end_time" '+%Y-%m-%d %H:%M:%S')\""
         echo "last_run_duration=$duration"
         echo "last_run_result=$exit_code"
         echo "last_run_src=$src"
