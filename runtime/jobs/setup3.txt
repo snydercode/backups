@@ -1,2 +1,2 @@
-/data:/bak/1/data
-/data:/bak/2/data
+/data:/io/data
+/data:/europa/data

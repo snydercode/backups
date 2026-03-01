@@ -10,8 +10,8 @@ All code is Bash — no Python, no build step, no compilation.
 | Host   | OS      | User | Source       | Destinations                     |
 | ------ | ------- | ---- | ------------ | -------------------------------- |
 | setup2 | Linux   | toor | /data        | /phobos/data, /deimos/data       |
-| setup3 | Linux   | toor | /data        | /bak/1/data, /bak/2/data         |
-| setup7 | Linux   | toor | /data        | /bak/1/data, /bak/2/data         |
+| setup3 | Linux   | toor | /data        | /io/data, /europa/data           |
+| setup7 | Linux   | toor | /data        | /ganymede/data, /callisto/data   |
 | ephys3 | Win+WSL | toor | /mnt/d/data  | /mnt/e/data, /mnt/f/data         |
 | ephys7 | Win+WSL | toor | /mnt/d/data  | /mnt/e/data (F disabled for now) |
 
@@ -115,7 +115,7 @@ last_run_result=0
 last_run_status=OK
 
 job_0_src=/data
-job_0_dest=/bak/1/data
+job_0_dest=/io/data
 job_0_enabled=1
 job_0_pending_files=0
 job_0_pending_bytes=0
