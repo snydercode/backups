@@ -86,6 +86,28 @@ while IFS= read -r line || [ -n "$line" ]; do
     echo "job_${job_index}_pending_bytes=$pending_bytes"
     echo "job_${job_index}_pending_human=$pending_human"
     
+    # Disk space on destination
+    if df_line=$(df -P "$dest" 2>/dev/null | tail -1); then
+        dest_total_kb=$(echo "$df_line" | awk '{print $2}')
+        dest_used_kb=$(echo "$df_line" | awk '{print $3}')
+        dest_avail_kb=$(echo "$df_line" | awk '{print $4}')
+        dest_used_pct=$(echo "$df_line" | awk '{print $5}')
+        # Human-readable available space
+        if command -v numfmt &>/dev/null; then
+            dest_avail_human=$(numfmt --to=iec --suffix=B -- "${dest_avail_kb}000" 2>/dev/null || echo "${dest_avail_kb}K")
+        else
+            dest_avail_human="${dest_avail_kb}K"
+        fi
+        echo "job_${job_index}_dest_total_kb=$dest_total_kb"
+        echo "job_${job_index}_dest_used_kb=$dest_used_kb"
+        echo "job_${job_index}_dest_avail_kb=$dest_avail_kb"
+        echo "job_${job_index}_dest_avail_human=$dest_avail_human"
+        echo "job_${job_index}_dest_used_pct=$dest_used_pct"
+    else
+        echo "job_${job_index}_dest_avail_human=UNKNOWN"
+        echo "job_${job_index}_dest_used_pct=UNKNOWN"
+    fi
+    
     # Determine status
     if [[ "$pending_files" == "0" ]]; then
         echo "job_${job_index}_status=UP_TO_DATE"

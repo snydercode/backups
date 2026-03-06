@@ -127,11 +127,15 @@ print_short_host_status() {
             status="DISABLED"
         fi
 
+        local dest_avail="${job["${idx}_dest_avail_human"]:-?}"
+        local dest_used_pct="${job["${idx}_dest_used_pct"]:-?}"
+
         if [[ -n "$err" ]]; then
             printf "  %s -> %s status=%s error=%s\n" "$src" "$dest" "$status" "$err"
         else
-            printf "  %s -> %s status=%s pending=%s (%s)\n" \
-                "$src" "$dest" "$status" "$pending_files" "$pending_human"
+            printf "  %s -> %s status=%s pending=%s (%s) avail=%s used=%s\n" \
+                "$src" "$dest" "$status" "$pending_files" "$pending_human" \
+                "$dest_avail" "$dest_used_pct"
         fi
     done
 }

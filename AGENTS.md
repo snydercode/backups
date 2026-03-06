@@ -119,6 +119,11 @@ job_0_dest=/io/data
 job_0_enabled=1
 job_0_pending_files=0
 job_0_pending_bytes=0
+job_0_dest_total_kb=3906886656
+job_0_dest_used_kb=2344131793
+job_0_dest_avail_kb=1562754863
+job_0_dest_avail_human=1.5TB
+job_0_dest_used_pct=60%
 job_0_status=UP_TO_DATE
 
 overall_status=OK
