@@ -14,14 +14,18 @@ SCHEDULE_TIME="01:00"
 # Parse hosts.txt into parallel arrays: HOSTS and IS_WSL
 HOSTS=()
 IS_WSL=()
+WIN_USERS=()
 while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^[[:space:]]*$ ]] && continue
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     host="${line%%:*}"
-    if [[ "$line" == *":wsl" ]]; then
+    if [[ "$line" == *":wsl"* ]]; then
         IS_WSL+=("1")
+        win_user_field=$(echo "$line" | cut -d: -f3)
+        WIN_USERS+=("$win_user_field")
     else
         IS_WSL+=("0")
+        WIN_USERS+=("")
     fi
     HOSTS+=("$host")
 done < "$HOSTS_FILE"
@@ -63,11 +67,15 @@ schedule_linux() {
 
 schedule_wsl() {
     local host="$1"
+    local win_user="$2"
 
-    echo "  Installing Task Scheduler job..."
+    echo "  Installing Task Scheduler job (Run As: $win_user)..."
 
     # Create/replace task (idempotent via /F flag)
-    ssh "$host" "schtasks.exe /Create /TN \"BackupKit\" /TR \"wsl.exe -e bash -lc $REMOTE_KIT_DIR/backup-run.sh\" /SC DAILY /ST $SCHEDULE_TIME /F" || {
+    # /IT: interactive token — runs only when win_user is logged in interactively.
+    # This is required because WSL2 distros are registered per-user in HKCU;
+    # SYSTEM has no distro registration and always fails with exit -1.
+    ssh "$host" "schtasks.exe /Create /TN \"BackupKit\" /TR \"wsl.exe -u toor -e bash -lc $REMOTE_KIT_DIR/backup-run.sh\" /SC DAILY /ST $SCHEDULE_TIME /RU \"$win_user\" /IT /F" || {
         echo "  ERROR: failed to create scheduled task"
         return 1
     }
@@ -86,6 +94,7 @@ main() {
     host_index "$host" || usage
 
     local is_wsl="${IS_WSL[$HOST_INDEX]}"
+    local win_user="${WIN_USERS[$HOST_INDEX]}"
 
     echo "=== Scheduling backup on $host ==="
 
@@ -95,7 +104,7 @@ main() {
             echo "ERROR: backup-kit not deployed on $host. Run deploy.sh first." >&2
             exit 1
         }
-        schedule_wsl "$host"
+        schedule_wsl "$host" "$win_user"
     else
         ssh "$host" "test -x $REMOTE_KIT_DIR/backup-run.sh" || {
             echo "ERROR: backup-kit not deployed on $host. Run deploy.sh first." >&2

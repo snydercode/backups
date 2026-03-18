@@ -1,2 +1,2 @@
-/data:/io/data
-/data:/europa/data
+/data:/phobos/data
+/data:/deimos/data

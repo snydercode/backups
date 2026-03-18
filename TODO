@@ -1,0 +1,1 @@
+have status igniore "files from today" when it checks if backups are up to date

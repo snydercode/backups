@@ -14,7 +14,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${HOME}/.local/state/backup-kit"
-LOCK_FILE="${STATE_DIR}/backup.lock"
 LOG_FILE="${STATE_DIR}/last-run.log"
 RESULT_FILE="${STATE_DIR}/last-run.txt"
 
@@ -29,7 +28,7 @@ RSYNC_FLAGS=(
 )
 
 usage() {
-    echo "usage: $0 --mode plan|run --src <path> --dest <path>" >&2
+    echo "usage: $0 --mode plan|run --src <path> --dest <path> [--max-age SECONDS]" >&2
     exit 2
 }
 
@@ -74,23 +73,69 @@ check_mount() {
     [ -d "$path" ] || mkdir -p "$path"
 }
 
-acquire_lock() {
-    exec 200>"$LOCK_FILE"
-    flock -n 200 || die "another backup is already running (lock: $LOCK_FILE)"
-}
+make_readonly() {
+    local dest="$1"
+    local log_file="$2"
 
-release_lock() {
-    flock -u 200 2>/dev/null || true
+    echo "--- chmod pass: setting files read-only in $dest ---" | tee -a "$log_file"
+    local chmod_start
+    chmod_start=$(date +%s)
+
+    local count=0
+    count=$(find "$dest" -type f \
+        ! -name '.rsync-partial' \
+        ! -path '*/.rsync-partial/*' \
+        ! -perm 444 \
+        -exec chmod 444 {} + \
+        -print 2>>"$log_file" | wc -l) || true
+
+    local chmod_end
+    chmod_end=$(date +%s)
+    local chmod_duration=$(( chmod_end - chmod_start ))
+    echo "chmod pass done: ${count} files updated in ${chmod_duration}s" | tee -a "$log_file"
 }
 
 run_plan() {
     local src="$1"
     local dest="$2"
+    local max_age="${3:-}"
     
     check_mount "$dest"
     
+    local rsync_cmd=("${RSYNC_FLAGS[@]}" --dry-run)
+    
+    # For rsync 3.2.0+, use --max-age. For older versions, filter via find.
+    if [[ -n "$max_age" ]]; then
+        # Try --max-age first (3.2.0+)
+        if rsync --help | grep -q -- "--max-age"; then
+            rsync_cmd+=(--max-age="$max_age")
+        else
+            # Fallback: use find to exclude files newer than max_age seconds ago
+            # Convert max_age (seconds) to a cutoff timestamp, then use -newermt
+            local cutoff_epoch=$(($(date +%s) - max_age))
+            local cutoff_date
+            cutoff_date=$(date -d "@$cutoff_epoch" '+%Y-%m-%d %H:%M:%S')
+            
+            # Generate list of files to exclude
+            local exclude_file
+            exclude_file=$(mktemp)
+            trap "rm -f '$exclude_file'" RETURN
+            
+            find "$src" -type f -newermt "$cutoff_date" 2>/dev/null | while read -r file; do
+                # Compute relative path for exclude pattern
+                rel_path="${file#$src/}"
+                echo "$rel_path"
+            done > "$exclude_file"
+            
+            # Add exclude list to rsync command
+            if [[ -s "$exclude_file" ]]; then
+                rsync_cmd+=(--exclude-from="$exclude_file")
+            fi
+        fi
+    fi
+    
     local output
-    output=$(rsync "${RSYNC_FLAGS[@]}" --dry-run "$src/" "$dest/" 2>&1)
+    output=$(rsync "${rsync_cmd[@]}" "$src/" "$dest/" 2>&1)
     
     # Extract stats
     local files bytes
@@ -119,8 +164,7 @@ run_backup() {
     
     ensure_state_dir
     check_mount "$dest"
-    acquire_lock
-    
+
     local start_time
     start_time=$(date +%s)
     
@@ -144,8 +188,12 @@ run_backup() {
         echo "last_run_dest=$dest"
     } > "$RESULT_FILE"
     
-    release_lock
-    
+    if [[ $exit_code -eq 0 ]]; then
+        make_readonly "$dest" "$LOG_FILE"
+    else
+        echo "rsync exited with $exit_code — skipping chmod pass" | tee -a "$LOG_FILE"
+    fi
+
     echo "Finished: $(date) (${duration}s, exit=$exit_code)" | tee -a "$LOG_FILE"
     return $exit_code
 }
@@ -153,21 +201,22 @@ run_backup() {
 # --- main ---
 
 main() {
-    local mode="" src="" dest=""
+    local mode="" src="" dest="" max_age=""
     
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --mode)  mode="$2"; shift 2 ;;
-            --src)   src="$2"; shift 2 ;;
-            --dest)  dest="$2"; shift 2 ;;
-            *)       usage ;;
+            --mode)     mode="$2"; shift 2 ;;
+            --src)      src="$2"; shift 2 ;;
+            --dest)     dest="$2"; shift 2 ;;
+            --max-age)  max_age="$2"; shift 2 ;;
+            *)          usage ;;
         esac
     done
     
     [[ -z "$mode" || -z "$src" || -z "$dest" ]] && usage
     
     case "$mode" in
-        plan) run_plan "$src" "$dest" ;;
+        plan) run_plan "$src" "$dest" "$max_age" ;;
         run)  run_backup "$src" "$dest" ;;
         *)    usage ;;
     esac

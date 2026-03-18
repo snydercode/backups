@@ -20,7 +20,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^[[:space:]]*$ ]] && continue
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     host="${line%%:*}"
-    if [[ "$line" == *":wsl" ]]; then
+    if [[ "$line" == *":wsl"* ]]; then
         IS_WSL+=("1")
     else
         IS_WSL+=("0")

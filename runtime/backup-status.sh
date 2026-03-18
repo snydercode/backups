@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # backup-status.sh — show health summary for AI agents and humans
 # Outputs both human-readable text and key=value lines
+# Usage: backup-status.sh [--before-date YYYY-MM-DD] [--before-time HH]
 
 set -e
 
@@ -13,6 +14,53 @@ JOBS_FILE="$SCRIPT_DIR/jobs.txt"
     echo "ERROR: jobs file not found: $JOBS_FILE" >&2
     exit 1
 }
+
+# Parse arguments
+before_date=""
+before_time=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --before-date)
+            before_date="$2"
+            shift 2
+            ;;
+        --before-time)
+            before_time="$2"
+            shift 2
+            ;;
+        *)
+            echo "ERROR: unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+# Compute max_age (always apply, with defaults)
+max_age=""
+# Default to today at 1AM if not specified
+cutoff_date="${before_date:-$(date +%Y-%m-%d)}"
+cutoff_time="${before_time:-1}"
+
+# Construct datetime string (pad hour if needed)
+cutoff_time=$(printf "%02d" "$cutoff_time")
+cutoff_datetime="$cutoff_date $cutoff_time:00:00"
+
+# Convert to epoch
+cutoff_epoch=$(date -d "$cutoff_datetime" +%s 2>/dev/null) || {
+    echo "ERROR: invalid date/time: $cutoff_datetime" >&2
+    exit 2
+}
+
+# Current epoch
+now_epoch=$(date +%s)
+
+# max_age in seconds (how old files must be to be included)
+max_age=$((now_epoch - cutoff_epoch))
+
+# Clamp to non-negative (if cutoff is in future, don't pass flag)
+if [[ $max_age -lt 0 ]]; then
+    max_age=""
+fi
 
 # Read last run metadata
 last_run_epoch=0
@@ -69,7 +117,11 @@ while IFS= read -r line || [ -n "$line" ]; do
     echo "job_${job_index}_enabled=1"
     
     # Get pending counts
-    plan_output=$("$SCRIPT_DIR/backup-sync.sh" --mode plan --src "$src" --dest "$dest" 2>&1) || {
+    sync_cmd=("$SCRIPT_DIR/backup-sync.sh" --mode plan --src "$src" --dest "$dest")
+    if [[ -n "$max_age" ]]; then
+        sync_cmd+=(--max-age "$max_age")
+    fi
+    plan_output=$("${sync_cmd[@]}" 2>&1) || {
         echo "job_${job_index}_status=ERROR"
         echo "job_${job_index}_error=$plan_output"
         echo ""
@@ -110,9 +162,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     
     # Determine status
     if [[ "$pending_files" == "0" ]]; then
-        echo "job_${job_index}_status=UP_TO_DATE"
-    elif [[ "$age_hours" -gt 30 && "$pending_files" -gt 0 ]]; then
-        echo "job_${job_index}_status=STALE"
+        echo "job_${job_index}_status=OK"
     else
         echo "job_${job_index}_status=PENDING"
     fi
@@ -124,8 +174,6 @@ done < "$JOBS_FILE"
 # Overall health verdict
 if [[ "$last_run_result" != "0" && "$last_run_epoch" -gt 0 ]]; then
     echo "overall_status=FAILED"
-elif [[ "$age_hours" -gt 30 ]]; then
-    echo "overall_status=STALE"
 elif [[ "$last_run_epoch" -eq 0 ]]; then
     echo "overall_status=NEVER_RUN"
 else

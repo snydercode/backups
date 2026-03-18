@@ -8,26 +8,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOSTS_FILE="$SCRIPT_DIR/hosts.txt"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
-MODE="verbose"
 
 usage() {
     cat <<'EOF'
-usage: status-all.sh [--short]
+usage: status-all.sh [--before-date YYYY-MM-DD] [--before-time HH]
+
+Prints a human-readable backup status table for all hosts.
 
 Options:
-  --short   Print compact human-readable status lines
+  --before-date YYYY-MM-DD    Only count files modified before this date (default: today)
+  --before-time HH            Hour in 24-hour format (default: 1)
 EOF
 }
 
+before_date=""
+before_time=""
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --short)
-            MODE="short"
-            shift
-            ;;
         -h|--help)
             usage
             exit 0
+            ;;
+        --before-date)
+            before_date="$2"
+            shift 2
+            ;;
+        --before-time)
+            before_time="$2"
+            shift 2
             ;;
         *)
             echo "ERROR: unknown argument: $1" >&2
@@ -44,7 +53,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^[[:space:]]*$ ]] && continue
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     host="${line%%:*}"
-    if [[ "$line" == *":wsl" ]]; then
+    if [[ "$line" == *":wsl"* ]]; then
         IS_WSL+=("1")
     else
         IS_WSL+=("0")
@@ -55,27 +64,32 @@ done < "$HOSTS_FILE"
 fetch_host_status() {
     local host="$1"
     local is_wsl="$2"
+    local before_date="$3"
+    local before_time="$4"
+
+    local cmd="$REMOTE_KIT_DIR/backup-status.sh"
+    if [[ -n "$before_date" ]]; then
+        cmd="$cmd --before-date $before_date"
+    fi
+    if [[ -n "$before_time" ]]; then
+        cmd="$cmd --before-time $before_time"
+    fi
 
     if [[ "$is_wsl" == "1" ]]; then
         # Windows host — run via WSL
         ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
-            "wsl.exe -e bash -lc '$REMOTE_KIT_DIR/backup-status.sh'" 2>&1
+            "wsl.exe -e bash -lc \"$cmd\"" 2>&1
     else
         # Linux host — direct
-        ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
-            "$REMOTE_KIT_DIR/backup-status.sh" 2>&1
+        ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$cmd" 2>&1
     fi
 }
 
-print_short_host_status() {
+print_pretty_host_status() {
     local host="$1"
     local output="$2"
 
-    local last_run_date="unknown"
     local last_run_age_hours="-1"
-    local last_run_status="UNKNOWN"
-    local overall_status="UNKNOWN"
-
     local -A job
     local -A seen
     local -a job_order=()
@@ -84,12 +98,8 @@ print_short_host_status() {
         if [[ "$line" =~ ^([a-zA-Z0-9_]+)=(.*)$ ]]; then
             local key="${BASH_REMATCH[1]}"
             local value="${BASH_REMATCH[2]}"
-
             case "$key" in
-                last_run_date) last_run_date="$value" ;;
                 last_run_age_hours) last_run_age_hours="$value" ;;
-                last_run_status) last_run_status="$value" ;;
-                overall_status) overall_status="$value" ;;
                 job_*)
                     if [[ "$key" =~ ^job_([0-9]+)_([a-z_]+)$ ]]; then
                         local idx="${BASH_REMATCH[1]}"
@@ -105,39 +115,47 @@ print_short_host_status() {
         fi
     done <<< "$output"
 
-    printf "%s overall=%s run=%s age=%sh last=%s\n" \
-        "$host" "$overall_status" "$last_run_status" "$last_run_age_hours" "$last_run_date"
-
-    if [[ ${#job_order[@]} -eq 0 ]]; then
-        echo "  no_jobs=found"
-        return
+    # Age string
+    local age_str
+    if [[ "$last_run_age_hours" -ge 0 ]]; then
+        age_str="${last_run_age_hours}h ago"
+    else
+        age_str="never"
     fi
 
     local idx
     for idx in "${job_order[@]}"; do
-        local src="${job["${idx}_src"]:-?}"
         local dest="${job["${idx}_dest"]:-?}"
         local status="${job["${idx}_status"]:-UNKNOWN}"
-        local enabled="${job["${idx}_enabled"]:-1}"
-        local pending_files="${job["${idx}_pending_files"]:-?}"
-        local pending_human="${job["${idx}_pending_human"]:-?}"
+        local pending_files="${job["${idx}_pending_files"]:-0}"
+        local pending_human="${job["${idx}_pending_human"]:-}"
         local err="${job["${idx}_error"]:-}"
 
-        if [[ "$enabled" == "0" ]]; then
-            status="DISABLED"
-        fi
-
-        local dest_avail="${job["${idx}_dest_avail_human"]:-?}"
-        local dest_used_pct="${job["${idx}_dest_used_pct"]:-?}"
-
+        local status_str
         if [[ -n "$err" ]]; then
-            printf "  %s -> %s status=%s error=%s\n" "$src" "$dest" "$status" "$err"
+            status_str="ERROR"
+        elif [[ "$status" == "OK" ]]; then
+            status_str="OK"
+        elif [[ "$status" == "DISABLED" ]]; then
+            status_str="DISABLED"
         else
-            printf "  %s -> %s status=%s pending=%s (%s) avail=%s used=%s\n" \
-                "$src" "$dest" "$status" "$pending_files" "$pending_human" \
-                "$dest_avail" "$dest_used_pct"
+            status_str="$status"
         fi
+
+        local detail=""
+        if [[ "$status_str" == "PENDING" ]]; then
+            detail="  ${pending_files} files, ${pending_human}"
+        elif [[ "$status_str" == "ERROR" ]]; then
+            detail="  $err"
+        fi
+
+        printf "%-10s  %-24s  %-10s  %s%s\n" \
+            "$host" "$dest" "$status_str" "$age_str" "$detail"
     done
+
+    if [[ ${#job_order[@]} -eq 0 ]]; then
+        printf "%-10s  %-24s  %-10s  %s\n" "$host" "(no jobs)" "UNKNOWN" "$age_str"
+    fi
 }
 
 render_host_output() {
@@ -146,40 +164,16 @@ render_host_output() {
     local output="$3"
 
     if [[ "$success" != "1" ]]; then
-        if [[ "$MODE" == "short" ]]; then
-            echo "$host overall=ERROR run=UNKNOWN age=-1h last=unknown"
-            echo "  error=unreachable_or_status_failed"
-        else
-            echo "========================================"
-            echo "[$host]"
-            echo "========================================"
-            echo "ERROR: could not reach $host or backup-status.sh failed"
-            echo ""
-        fi
+        printf "%-10s  %-24s  %-10s\n" "$host" "(all jobs)" "UNREACHABLE"
         return
     fi
 
-    if [[ "$MODE" == "short" ]]; then
-        print_short_host_status "$host" "$output"
-        echo ""
-    else
-        echo "========================================"
-        echo "[$host]"
-        echo "========================================"
-        echo "$output"
-        echo ""
-    fi
+    print_pretty_host_status "$host" "$output"
 }
 
 # --- main ---
 
-if [[ "$MODE" == "short" ]]; then
-    echo "Backup Status (short)"
-else
-    echo "Backup Status Report"
-fi
-echo "Generated: $(date)"
-echo ""
+printf "%-10s  %-24s  %-10s  %s\n" "HOST" "DESTINATION" "STATUS" "LAST RUN"
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -188,15 +182,15 @@ OUT_FILES=()
 RC_FILES=()
 PIDS=()
 
+# Pass 1: Linux hosts in parallel
 for i in "${!HOSTS[@]}"; do
+    [[ "${IS_WSL[$i]}" == "1" ]] && continue
     out_file="$tmp_dir/out_$i.txt"
     rc_file="$tmp_dir/rc_$i.txt"
-
-    OUT_FILES+=("$out_file")
-    RC_FILES+=("$rc_file")
-
+    OUT_FILES[$i]="$out_file"
+    RC_FILES[$i]="$rc_file"
     {
-        if fetch_host_status "${HOSTS[$i]}" "${IS_WSL[$i]}" >"$out_file" 2>&1; then
+        if fetch_host_status "${HOSTS[$i]}" "${IS_WSL[$i]}" "$before_date" "$before_time" >"$out_file" 2>&1; then
             echo "1" >"$rc_file"
         else
             echo "0" >"$rc_file"
@@ -208,6 +202,21 @@ done
 for pid in "${PIDS[@]}"; do
     wait "$pid" || true
 done
+
+# Pass 2: WSL hosts sequentially
+for i in "${!HOSTS[@]}"; do
+    [[ "${IS_WSL[$i]}" == "0" ]] && continue
+    out_file="$tmp_dir/out_$i.txt"
+    rc_file="$tmp_dir/rc_$i.txt"
+    OUT_FILES[$i]="$out_file"
+    RC_FILES[$i]="$rc_file"
+    if fetch_host_status "${HOSTS[$i]}" "${IS_WSL[$i]}" "$before_date" "$before_time" >"$out_file" 2>&1; then
+        echo "1" >"$rc_file"
+    else
+        echo "0" >"$rc_file"
+    fi
+done
+
 
 for i in "${!HOSTS[@]}"; do
     success="0"
@@ -223,7 +232,4 @@ for i in "${!HOSTS[@]}"; do
     render_host_output "${HOSTS[$i]}" "$success" "$output"
 done
 
-if [[ "$MODE" != "short" ]]; then
-    echo "========================================"
-    echo "Report complete."
-fi
+

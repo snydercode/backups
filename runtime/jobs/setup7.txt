@@ -1,5 +1,2 @@
-/data:/ganymede/data
-/data:/callisto/data
-# stale and unmounted on setup7:
-# /data:/phobos/data
-# /data:/deimos/data
+/data:/phobos/data
+/data:/deimos/data
