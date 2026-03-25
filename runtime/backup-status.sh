@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # backup-status.sh — show health summary for AI agents and humans
 # Outputs both human-readable text and key=value lines
-# Usage: backup-status.sh [--before-date YYYY-MM-DD] [--before-time HH]
+# Usage: backup-status.sh [--before YYYY-MM-DD]
 
 set -e
 
@@ -17,15 +17,10 @@ JOBS_FILE="$SCRIPT_DIR/jobs.txt"
 
 # Parse arguments
 before_date=""
-before_time=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --before-date)
+        --before)
             before_date="$2"
-            shift 2
-            ;;
-        --before-time)
-            before_time="$2"
             shift 2
             ;;
         *)
@@ -35,15 +30,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Compute max_age (always apply, with defaults)
+# Compute max_age (always apply, date-only)
 max_age=""
-# Default to today at 1AM if not specified
+# Default to today if not specified
 cutoff_date="${before_date:-$(date +%Y-%m-%d)}"
-cutoff_time="${before_time:-1}"
 
-# Construct datetime string (pad hour if needed)
-cutoff_time=$(printf "%02d" "$cutoff_time")
-cutoff_datetime="$cutoff_date $cutoff_time:00:00"
+# Strict YYYY-MM-DD for explicit --before
+if [[ -n "$before_date" && ! "$before_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "ERROR: --before must be YYYY-MM-DD" >&2
+    exit 2
+fi
+
+# Construct date-only cutoff at midnight
+cutoff_datetime="$cutoff_date 00:00:00"
 
 # Convert to epoch
 cutoff_epoch=$(date -d "$cutoff_datetime" +%s 2>/dev/null) || {

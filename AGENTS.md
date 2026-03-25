@@ -67,12 +67,13 @@ The `:wsl` suffix tells deploy/status scripts to wrap commands with `wsl.exe -e 
 
 `hub/check-and-email.sh` collects status from all hosts and emails a daily digest to `chuck@eye-hand.wustl.edu` (aliased to `charles.d.holmes@gmail.com`).
 
-- Runs daily at **8:30 AM** via cron on chuck's workstation (`farore`)
-- Sends through eye-hand's Postfix: `ssh eye "sendmail -t"`
+- Runs daily at **8:30 AM** via cron on `eye-hand`
+- Sends via local `sendmail -t` when running on `eye-hand` (otherwise relays via `ssh eye "sendmail -t"`)
 - Subject encodes overall health: `[backup] OK`, `WARNING`, `RUNNING`, or `FAILED`
 - Reports per-host: overall status, last run age, per-job pending files/bytes, disk avail/used
 - Detects still-running backups via `pgrep -f backup-run.sh` on each host
 - Log: `~/.local/state/backup-kit/email.log`
+- Install/update cron on eye-hand: `make install-email`
 - Dry run: `bash hub/check-and-email.sh --dry-run`
 
 ---

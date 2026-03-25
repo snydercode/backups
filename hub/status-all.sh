@@ -11,18 +11,18 @@ REMOTE_KIT_DIR="/home/toor/backup-kit"
 
 usage() {
     cat <<'EOF'
-usage: status-all.sh [--before-date YYYY-MM-DD] [--before-time HH]
+usage: status-all.sh [--raw] [--before YYYY-MM-DD]
 
-Prints a human-readable backup status table for all hosts.
+Prints backup status for all hosts.
 
 Options:
-  --before-date YYYY-MM-DD    Only count files modified before this date (default: today)
-  --before-time HH            Hour in 24-hour format (default: 1)
+  --raw                       Print machine-parseable key=value output
+  --before YYYY-MM-DD         Only count files modified before this date (default: today)
 EOF
 }
 
 before_date=""
-before_time=""
+RAW=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -30,12 +30,12 @@ while [[ $# -gt 0 ]]; do
             usage
             exit 0
             ;;
-        --before-date)
-            before_date="$2"
-            shift 2
+        --raw)
+            RAW=1
+            shift
             ;;
-        --before-time)
-            before_time="$2"
+        --before)
+            before_date="$2"
             shift 2
             ;;
         *)
@@ -65,14 +65,10 @@ fetch_host_status() {
     local host="$1"
     local is_wsl="$2"
     local before_date="$3"
-    local before_time="$4"
 
     local cmd="$REMOTE_KIT_DIR/backup-status.sh"
     if [[ -n "$before_date" ]]; then
-        cmd="$cmd --before-date $before_date"
-    fi
-    if [[ -n "$before_time" ]]; then
-        cmd="$cmd --before-time $before_time"
+        cmd="$cmd --before $before_date"
     fi
 
     if [[ "$is_wsl" == "1" ]]; then
@@ -90,6 +86,7 @@ print_pretty_host_status() {
     local output="$2"
 
     local last_run_age_hours="-1"
+    local overall_status="UNKNOWN"
     local -A job
     local -A seen
     local -a job_order=()
@@ -100,6 +97,7 @@ print_pretty_host_status() {
             local value="${BASH_REMATCH[2]}"
             case "$key" in
                 last_run_age_hours) last_run_age_hours="$value" ;;
+                overall_status)     overall_status="$value" ;;
                 job_*)
                     if [[ "$key" =~ ^job_([0-9]+)_([a-z_]+)$ ]]; then
                         local idx="${BASH_REMATCH[1]}"
@@ -123,39 +121,50 @@ print_pretty_host_status() {
         age_str="never"
     fi
 
+    # Host header line
+    printf "%-8s  %-10s  last run %s\n" "$host" "$overall_status" "$age_str"
+
+    if [[ ${#job_order[@]} -eq 0 ]]; then
+        printf "          (no jobs)\n"
+        return
+    fi
+
     local idx
     for idx in "${job_order[@]}"; do
         local dest="${job["${idx}_dest"]:-?}"
         local status="${job["${idx}_status"]:-UNKNOWN}"
-        local pending_files="${job["${idx}_pending_files"]:-0}"
-        local pending_human="${job["${idx}_pending_human"]:-}"
+        local pending_files="${job["${idx}_pending_files"]:-?}"
+        local dest_avail="${job["${idx}_dest_avail_human"]:-?}"
+        local dest_total_kb="${job["${idx}_dest_total_kb"]:-}"
         local err="${job["${idx}_error"]:-}"
 
-        local status_str
-        if [[ -n "$err" ]]; then
-            status_str="ERROR"
-        elif [[ "$status" == "OK" ]]; then
-            status_str="OK"
-        elif [[ "$status" == "DISABLED" ]]; then
-            status_str="DISABLED"
+        # Convert total KB to human-readable
+        local dest_total_human
+        if [[ -n "$dest_total_kb" && "$dest_total_kb" =~ ^[0-9]+$ ]]; then
+            dest_total_human=$(numfmt --to=iec --suffix=B --from-unit=1024 "$dest_total_kb" 2>/dev/null || echo "${dest_total_kb}K")
         else
-            status_str="$status"
+            dest_total_human="?"
         fi
 
-        local detail=""
-        if [[ "$status_str" == "PENDING" ]]; then
-            detail="  ${pending_files} files, ${pending_human}"
-        elif [[ "$status_str" == "ERROR" ]]; then
-            detail="  $err"
-        fi
+        local space_str="${dest_avail} of ${dest_total_human} free"
 
-        printf "%-10s  %-24s  %-10s  %s%s\n" \
-            "$host" "$dest" "$status_str" "$age_str" "$detail"
+        if [[ -n "$err" ]]; then
+            printf "          %-22s  ERROR: %s\n" "$dest" "$err"
+        elif [[ "$status" == "OK" || "$status" == "UP_TO_DATE" ]]; then
+            printf "          %-22s  OK            %s\n" "$dest" "$space_str"
+        else
+            printf "          %-22s  %-12s  %s files pending   %s\n" \
+                "$dest" "$status" "$pending_files" "$space_str"
+        fi
     done
+}
 
-    if [[ ${#job_order[@]} -eq 0 ]]; then
-        printf "%-10s  %-24s  %-10s  %s\n" "$host" "(no jobs)" "UNKNOWN" "$age_str"
-    fi
+print_raw_host_status() {
+    local host="$1"
+    local output="$2"
+    echo "host=$host"
+    echo "$output"
+    echo ""
 }
 
 render_host_output() {
@@ -163,8 +172,19 @@ render_host_output() {
     local success="$2"
     local output="$3"
 
+    if [[ "$RAW" == "1" ]]; then
+        if [[ "$success" != "1" ]]; then
+            echo "host=$host"
+            echo "overall_status=UNREACHABLE"
+            echo ""
+        else
+            print_raw_host_status "$host" "$output"
+        fi
+        return
+    fi
+
     if [[ "$success" != "1" ]]; then
-        printf "%-10s  %-24s  %-10s\n" "$host" "(all jobs)" "UNREACHABLE"
+        printf "%-8s  UNREACHABLE\n" "$host"
         return
     fi
 
@@ -172,8 +192,6 @@ render_host_output() {
 }
 
 # --- main ---
-
-printf "%-10s  %-24s  %-10s  %s\n" "HOST" "DESTINATION" "STATUS" "LAST RUN"
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -190,7 +208,7 @@ for i in "${!HOSTS[@]}"; do
     OUT_FILES[$i]="$out_file"
     RC_FILES[$i]="$rc_file"
     {
-        if fetch_host_status "${HOSTS[$i]}" "${IS_WSL[$i]}" "$before_date" "$before_time" >"$out_file" 2>&1; then
+        if fetch_host_status "${HOSTS[$i]}" "${IS_WSL[$i]}" "$before_date" >"$out_file" 2>&1; then
             echo "1" >"$rc_file"
         else
             echo "0" >"$rc_file"
@@ -210,7 +228,7 @@ for i in "${!HOSTS[@]}"; do
     rc_file="$tmp_dir/rc_$i.txt"
     OUT_FILES[$i]="$out_file"
     RC_FILES[$i]="$rc_file"
-    if fetch_host_status "${HOSTS[$i]}" "${IS_WSL[$i]}" "$before_date" "$before_time" >"$out_file" 2>&1; then
+    if fetch_host_status "${HOSTS[$i]}" "${IS_WSL[$i]}" "$before_date" >"$out_file" 2>&1; then
         echo "1" >"$rc_file"
     else
         echo "0" >"$rc_file"
@@ -231,5 +249,4 @@ for i in "${!HOSTS[@]}"; do
 
     render_host_output "${HOSTS[$i]}" "$success" "$output"
 done
-
 

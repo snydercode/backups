@@ -20,6 +20,10 @@ if [[ "${1:-}" == "--dry-run" ]]; then
     DRY_RUN=1
 fi
 
+LOCAL_HOST="$(hostname -s 2>/dev/null || hostname)"
+
+BEFORE_DATE="$(date +%Y-%m-%d)"
+
 # --- Parse hosts.txt ---
 
 HOSTS=()
@@ -46,7 +50,7 @@ for i in "${!HOSTS[@]}"; do
     rc="$tmp_dir/rc_$i.txt"
     run="$tmp_dir/running_$i.txt"
     {
-        cmd="$REMOTE_KIT_DIR/backup-status.sh"
+        cmd="$REMOTE_KIT_DIR/backup-status.sh --before $BEFORE_DATE"
         if ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$cmd" >"$out" 2>&1; then
             echo "1" >"$rc"
         else
@@ -69,9 +73,9 @@ for i in "${!HOSTS[@]}"; do
     rc="$tmp_dir/rc_$i.txt"
     run="$tmp_dir/running_$i.txt"
     if [[ "$is_wsl" == "1" ]]; then
-        cmd="wsl.exe -e bash -lc '$REMOTE_KIT_DIR/backup-status.sh'"
+        cmd="wsl.exe -e bash -lc '$REMOTE_KIT_DIR/backup-status.sh --before $BEFORE_DATE'"
     else
-        cmd="$REMOTE_KIT_DIR/backup-status.sh"
+        cmd="$REMOTE_KIT_DIR/backup-status.sh --before $BEFORE_DATE"
     fi
     if ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$cmd" >"$out" 2>&1; then
         echo "1" >"$rc"
@@ -186,15 +190,25 @@ for i in "${!HOSTS[@]}"; do
         pending_human="${job["job_${idx}_pending_human"]:-?}"
         dest_avail="${job["job_${idx}_dest_avail_human"]:-?}"
         dest_used_pct="${job["job_${idx}_dest_used_pct"]:-?}"
+        dest_total_kb="${job["job_${idx}_dest_total_kb"]:-}"
         err="${job["job_${idx}_error"]:-}"
+
+        # Convert total KB to human-readable
+        if [[ -n "$dest_total_kb" && "$dest_total_kb" =~ ^[0-9]+$ ]]; then
+            dest_total_human=$(numfmt --to=iec --suffix=B --from-unit=1024 "$dest_total_kb" 2>/dev/null || echo "${dest_total_kb}K")
+        else
+            dest_total_human="?"
+        fi
+
+        space_str="${dest_avail} of ${dest_total_human} free"
 
         if [[ -n "$err" ]]; then
             body_lines+=("$(printf "          %-22s  ERROR: %s" "$dest" "$err")")
-        elif [[ "$status" == "UP_TO_DATE" ]]; then
-            body_lines+=("$(printf "          %-22s  UP_TO_DATE   avail=%s used=%s" "$dest" "$dest_avail" "$dest_used_pct")")
+        elif [[ "$status" == "OK" || "$status" == "UP_TO_DATE" ]]; then
+            body_lines+=("$(printf "          %-22s  OK            %s" "$dest" "$space_str")")
         else
-            body_lines+=("$(printf "          %-22s  %-11s  pending=%s files (%s)   avail=%s used=%s" \
-                "$dest" "$status" "$pending_files" "$pending_human" "$dest_avail" "$dest_used_pct")")
+            body_lines+=("$(printf "          %-22s  %-12s  %s files pending   %s" \
+                "$dest" "$status" "$pending_files" "$space_str")")
         fi
     done
 
@@ -208,16 +222,12 @@ done
 
 subject="[backup] ${overall_flag} — $(date '+%a %b %d %Y')"
 
-body="Backup Status Report
-Generated: $(date '+%a %b %d %Y %H:%M %Z')
-Host:      $(hostname)
+body="Backup Status — $(date '+%a %b %d %Y %H:%M %Z')
 ========================================"
 for line in "${body_lines[@]}"; do
     body+=$'\n'"$line"
 done
 body+=$'\n'"========================================"
-body+=$'\n'"setup2 note: unreachable hosts show as UNREACHABLE (not necessarily failed)"
-body+=$'\n'"ephys note:  chmod 444 on NTFS volumes requires metadata mount option to persist"
 
 # --- Send or dry-run ---
 
@@ -231,6 +241,10 @@ if [[ "$DRY_RUN" == "1" ]]; then
     echo "=== DRY RUN — would send: ==="
     echo "$email_msg"
 else
-    printf '%s\n' "$email_msg" | ssh -o BatchMode=yes "$SEND_HOST" "sendmail -t"
+    if [[ "$LOCAL_HOST" == "eye-hand" ]]; then
+        printf '%s\n' "$email_msg" | sendmail -t
+    else
+        printf '%s\n' "$email_msg" | ssh -o BatchMode=yes "$SEND_HOST" "sendmail -t"
+    fi
     echo "Email sent: $subject"
 fi
