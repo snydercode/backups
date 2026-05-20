@@ -36,4 +36,4 @@ echo "Scheduling complete."
 echo
 echo "Next steps:"
 echo "  1. Run 'bash hub/status-all.sh' to verify backup health"
-echo "  2. Wait for scheduled time (01:00) or manually test: ssh <host> '~/backup-kit/backup-run.sh'"
+echo "  2. Wait for scheduled time (01:00) or manually test: ssh <host> '~/backup-kit/backup.sh run'"

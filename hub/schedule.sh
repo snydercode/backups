@@ -51,7 +51,7 @@ host_index() {
 
 schedule_linux() {
     local host="$1"
-    local cron_cmd="0 1 * * * $REMOTE_KIT_DIR/backup-run.sh >> $REMOTE_STATE_DIR/cron.log 2>&1"
+    local cron_cmd="0 1 * * * $REMOTE_KIT_DIR/backup.sh run >> $REMOTE_STATE_DIR/cron.log 2>&1"
 
     echo "  Installing cron job..."
 
@@ -75,7 +75,7 @@ schedule_wsl() {
     # /IT: interactive token — runs only when win_user is logged in interactively.
     # This is required because WSL2 distros are registered per-user in HKCU;
     # SYSTEM has no distro registration and always fails with exit -1.
-    ssh "$host" "schtasks.exe /Create /TN \"BackupKit\" /TR \"wsl.exe -u toor -e bash -lc $REMOTE_KIT_DIR/backup-run.sh\" /SC DAILY /ST $SCHEDULE_TIME /RU \"$win_user\" /IT /F" || {
+    ssh "$host" "schtasks.exe /Create /TN \"BackupKit\" /TR \"wsl.exe -u toor -e bash -lc $REMOTE_KIT_DIR/backup.sh run\" /SC DAILY /ST $SCHEDULE_TIME /RU \"$win_user\" /IT /F" || {
         echo "  ERROR: failed to create scheduled task"
         return 1
     }
@@ -100,13 +100,13 @@ main() {
 
     # Preflight: check that backup-kit is deployed
     if [[ "$is_wsl" == "1" ]]; then
-        ssh "$host" "wsl.exe -e bash -lc \"test -x $REMOTE_KIT_DIR/backup-run.sh\"" || {
+        ssh "$host" "wsl.exe -e bash -lc \"test -x $REMOTE_KIT_DIR/backup.sh\"" || {
             echo "ERROR: backup-kit not deployed on $host. Run deploy.sh first." >&2
             exit 1
         }
         schedule_wsl "$host" "$win_user"
     else
-        ssh "$host" "test -x $REMOTE_KIT_DIR/backup-run.sh" || {
+        ssh "$host" "test -x $REMOTE_KIT_DIR/backup.sh" || {
             echo "ERROR: backup-kit not deployed on $host. Run deploy.sh first." >&2
             exit 1
         }

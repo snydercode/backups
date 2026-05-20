@@ -1,0 +1,23 @@
+# One source of truth for all backup jobs.
+# Section names must match host names in hub/hosts.txt.
+
+[setup2]
+/data:/phobos/data
+/data:/deimos/data
+
+[setup3]
+/data:/phobos/data
+/data:/deimos/data
+
+[setup7]
+/data:/phobos/data
+/data:/deimos/data
+
+[ephys3]
+/mnt/d/data:/mnt/e/data
+/mnt/d/data:/mnt/f/data
+
+[ephys7]
+/mnt/d/data:/mnt/e/data
+# enable when F drive exists:
+# /mnt/d/data:/mnt/f/data

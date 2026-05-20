@@ -36,5 +36,5 @@ echo "Deployment complete."
 echo
 echo "Next steps:"
 echo "  1. Run 'bash hub/status-all.sh' to verify deployment"
-echo "  2. Test on one host: ssh <host> '~/backup-kit/backup-plan.sh'"
+echo "  2. Test on one host: ssh <host> '~/backup-kit/backup.sh plan'"
 echo "  3. Schedule backups (see AGENTS.md for cron/Task Scheduler setup)"

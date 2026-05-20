@@ -1,3 +1,0 @@
-/mnt/d/data:/mnt/e/data
-# enable when F drive exists:
-# /mnt/d/data:/mnt/f/data

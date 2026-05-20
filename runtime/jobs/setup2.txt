@@ -1,2 +1,0 @@
-/data:/phobos/data
-/data:/deimos/data

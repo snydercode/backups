@@ -68,9 +68,9 @@ fetch_host_status() {
 
     local cmd
     if [[ "$RAW" == "1" ]]; then
-        cmd="$REMOTE_KIT_DIR/backup-status.sh"
+        cmd="$REMOTE_KIT_DIR/backup.sh status"
     else
-        cmd="if [[ -f $REMOTE_KIT_DIR/backup-status-human.sh ]]; then bash $REMOTE_KIT_DIR/backup-status-human.sh; else bash $REMOTE_KIT_DIR/backup-status.sh; fi"
+        cmd="$REMOTE_KIT_DIR/backup.sh status --human"
     fi
 
     if [[ -n "$before_date" ]]; then

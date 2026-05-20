@@ -50,7 +50,7 @@ for i in "${!HOSTS[@]}"; do
     rc="$tmp_dir/rc_$i.txt"
     run="$tmp_dir/running_$i.txt"
     {
-        cmd="$REMOTE_KIT_DIR/backup-status.sh --before $BEFORE_DATE"
+        cmd="$REMOTE_KIT_DIR/backup.sh status --before $BEFORE_DATE"
         if ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$cmd" >"$out" 2>&1; then
             echo "1" >"$rc"
         else
@@ -58,7 +58,7 @@ for i in "${!HOSTS[@]}"; do
         fi
 
         # Check if backup process is still running
-        run_check="pgrep -f backup-run.sh >/dev/null && echo running || echo idle"
+        run_check="pgrep -f 'backup.sh run' >/dev/null && echo running || echo idle"
         ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$run_check" >"$run" 2>/dev/null || echo "unknown" >"$run"
     } &
 done
@@ -73,9 +73,9 @@ for i in "${!HOSTS[@]}"; do
     rc="$tmp_dir/rc_$i.txt"
     run="$tmp_dir/running_$i.txt"
     if [[ "$is_wsl" == "1" ]]; then
-        cmd="wsl.exe -e bash -lc '$REMOTE_KIT_DIR/backup-status.sh --before $BEFORE_DATE'"
+        cmd="wsl.exe -e bash -lc '$REMOTE_KIT_DIR/backup.sh status --before $BEFORE_DATE'"
     else
-        cmd="$REMOTE_KIT_DIR/backup-status.sh --before $BEFORE_DATE"
+        cmd="$REMOTE_KIT_DIR/backup.sh status --before $BEFORE_DATE"
     fi
     if ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$cmd" >"$out" 2>&1; then
         echo "1" >"$rc"
@@ -84,9 +84,9 @@ for i in "${!HOSTS[@]}"; do
     fi
     # Check if backup process is still running
     if [[ "$is_wsl" == "1" ]]; then
-        run_check="wsl.exe -e bash -lc 'pgrep -f backup-run.sh >/dev/null && echo running || echo idle'"
+        run_check="wsl.exe -e bash -lc 'pgrep -f \"backup.sh run\" >/dev/null && echo running || echo idle'"
     else
-        run_check="pgrep -f backup-run.sh >/dev/null && echo running || echo idle"
+        run_check="pgrep -f 'backup.sh run' >/dev/null && echo running || echo idle"
     fi
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$run_check" >"$run" 2>/dev/null || echo "unknown" >"$run"
 done
