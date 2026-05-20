@@ -1,24 +1,20 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: help status-all status-all-raw deploy-all schedule-all
+.PHONY: help status deploy schedule
 
 help:
 	@echo "Targets:"
-	@echo "  make status-all      # human fleet status"
-	@echo "  make status-all-raw  # machine key=value status"
-	@echo "  make deploy-all      # deploy backup runtime to all hosts"
-	@echo "  make schedule-all    # install schedules on all hosts"
+	@echo "  make status  # human fleet status"
+	@echo "  make deploy  # deploy runtime to all hosts"
+	@echo "  make schedule  # install schedules on all hosts"
 	@echo ""
 	@echo "Archived email scripts: archive/check-and-email.sh, archive/install-email-cron.sh"
 
-status-all:
+status:
 	bash bin/status-all.sh
 
-status-all-raw:
-	bash bin/status-all.sh --raw
-
-deploy-all:
+deploy:
 	bash bin/deploy-all.sh
 
-schedule-all:
+schedule:
 	bash bin/schedule-all.sh

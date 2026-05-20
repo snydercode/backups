@@ -123,9 +123,17 @@ render_host_output() {
 
     if [[ "$RAW" == "1" ]]; then
         if [[ "$success" != "1" ]]; then
+            local err_type="command_failed"
+            if [[ "$output" == *"Connection timed out"* || "$output" == *"Could not resolve hostname"* || "$output" == *"Connection refused"* || "$output" == *"No route to host"* || "$output" == *"Permission denied"* ]]; then
+                err_type="ssh_failed"
+            fi
             echo "host=$host"
-            echo "overall_status=UNREACHABLE"
-            echo "error=ssh_failed"
+            if [[ "$err_type" == "ssh_failed" ]]; then
+                echo "overall_status=UNREACHABLE"
+            else
+                echo "overall_status=ERROR"
+            fi
+            echo "error=$err_type"
             echo ""
         else
             echo "$output"
@@ -135,7 +143,12 @@ render_host_output() {
     fi
 
     if [[ "$success" != "1" ]]; then
-        printf "%-8s  [UNREACHABLE] ssh failed\n" "$host"
+        if [[ "$output" == *"Connection timed out"* || "$output" == *"Could not resolve hostname"* || "$output" == *"Connection refused"* || "$output" == *"No route to host"* || "$output" == *"Permission denied"* ]]; then
+            printf "%-8s  [UNREACHABLE] ssh failed\n" "$host"
+        else
+            local first_line="${output%%$'\n'*}"
+            printf "%-8s  [ERROR] remote status command failed: %s\n" "$host" "$first_line"
+        fi
         return
     fi
 
