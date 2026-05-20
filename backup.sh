@@ -212,6 +212,30 @@ run_for_all_jobs() {
     return $exit_code
 }
 
+latest_file_mtime() {
+    local path="$1"
+
+    [ -d "$path" ] || {
+        echo "last_file_epoch=-1"
+        echo "last_file_time=ERROR:not_a_directory"
+        return 1
+    }
+
+    local latest_epoch
+    latest_epoch=$(find "$path" -type f -printf '%T@\n' 2>/dev/null | awk 'BEGIN{m=-1} {if ($1>m) m=$1} END{if (m>=0) printf "%.0f", m; else print "-1"}')
+
+    if [[ "$latest_epoch" == "-1" ]]; then
+        echo "last_file_epoch=-1"
+        echo "last_file_time=never"
+        return 0
+    fi
+
+    local latest_time
+    latest_time=$(date -d "@$latest_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
+    echo "last_file_epoch=$latest_epoch"
+    echo "last_file_time=$latest_time"
+}
+
 status_machine() {
     local jobs_file="$1"
     local before_date="$2"
@@ -276,6 +300,14 @@ status_machine() {
         echo "job_${job_index}_src=$src"
         echo "job_${job_index}_dest=$dest"
         echo "job_${job_index}_enabled=1"
+
+        src_mtime_output=$(latest_file_mtime "$src" 2>&1) || true
+        src_last_file_epoch=$(echo "$src_mtime_output" | grep '^last_file_epoch=' | cut -d= -f2)
+        src_last_file_time=$(echo "$src_mtime_output" | grep '^last_file_time=' | cut -d= -f2-)
+        src_last_file_epoch="${src_last_file_epoch:--1}"
+        src_last_file_time="${src_last_file_time:-unknown}"
+        echo "job_${job_index}_src_last_file_epoch=$src_last_file_epoch"
+        echo "job_${job_index}_src_last_file_time=$src_last_file_time"
 
         sync_output=$(run_plan_one "$src" "$dest" "$max_age" 2>&1) || {
             echo "job_${job_index}_status=ERROR"
@@ -389,6 +421,7 @@ status_human() {
     for idx in "${job_order[@]}"; do
         dest="${job["${idx}_dest"]:-?}"
         status="${job["${idx}_status"]:-UNKNOWN}"
+        src_last_file_time="${job["${idx}_src_last_file_time"]:-unknown}"
         pending_files="${job["${idx}_pending_files"]:-?}"
         pending_human="${job["${idx}_pending_human"]:-?}"
         dest_avail="${job["${idx}_dest_avail_human"]:-?}"
@@ -404,15 +437,15 @@ status_human() {
         space_str="${dest_avail} of ${dest_total_human} free"
 
         if [[ -n "$err" ]]; then
-            printf "          %-22s  [ERROR] %s\n" "$dest" "$err"
+            printf "          %-22s  [ERROR] %s   src last data %s\n" "$dest" "$err" "$src_last_file_time"
         elif [[ "$status" == "OK" || "$status" == "UP_TO_DATE" ]]; then
-            printf "          %-22s  [OK]         %s\n" "$dest" "$space_str"
+            printf "          %-22s  [OK]         %s   src last data %s\n" "$dest" "$space_str" "$src_last_file_time"
         elif [[ "$status" == "PENDING" ]]; then
-            printf "          %-22s  [PENDING]    %s files (%s)   %s\n" "$dest" "$pending_files" "$pending_human" "$space_str"
+            printf "          %-22s  [PENDING]    %s files (%s)   %s   src last data %s\n" "$dest" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
         elif [[ "$status" == "STALE" ]]; then
-            printf "          %-22s  [STALE]      %s files (%s)   %s\n" "$dest" "$pending_files" "$pending_human" "$space_str"
+            printf "          %-22s  [STALE]      %s files (%s)   %s   src last data %s\n" "$dest" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
         else
-            printf "          %-22s  [%s]  %s files (%s)   %s\n" "$dest" "$status" "$pending_files" "$pending_human" "$space_str"
+            printf "          %-22s  [%s]  %s files (%s)   %s   src last data %s\n" "$dest" "$status" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
         fi
     done
 }
