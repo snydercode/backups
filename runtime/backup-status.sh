@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# backup-status.sh — show health summary for AI agents and humans
-# Outputs both human-readable text and key=value lines
+# backup-status.sh — machine-readable backup health status
+# Outputs key=value lines only.
 # Usage: backup-status.sh [--before YYYY-MM-DD]
 
 set -e
@@ -78,9 +78,7 @@ else
     age_hours=-1
 fi
 
-echo "=== Backup Status ==="
 echo "host=$(hostname)"
-echo ""
 
 # Last run info
 if [[ "$last_run_epoch" -gt 0 ]]; then
@@ -99,8 +97,6 @@ else
     echo "last_run_status=NEVER_RUN"
 fi
 
-echo ""
-
 # Check each job
 job_index=0
 while IFS= read -r line || [ -n "$line" ]; do
@@ -110,7 +106,6 @@ while IFS= read -r line || [ -n "$line" ]; do
     IFS=':' read -r src dest <<< "$line"
     [ -n "$src" ] && [ -n "$dest" ] || continue
     
-    echo "--- Job $job_index: $src -> $dest ---"
     echo "job_${job_index}_src=$src"
     echo "job_${job_index}_dest=$dest"
     echo "job_${job_index}_enabled=1"
@@ -123,7 +118,6 @@ while IFS= read -r line || [ -n "$line" ]; do
     plan_output=$("${sync_cmd[@]}" 2>&1) || {
         echo "job_${job_index}_status=ERROR"
         echo "job_${job_index}_error=$plan_output"
-        echo ""
         job_index=$((job_index + 1))
         continue
     }
@@ -166,7 +160,6 @@ while IFS= read -r line || [ -n "$line" ]; do
         echo "job_${job_index}_status=PENDING"
     fi
     
-    echo ""
     job_index=$((job_index + 1))
 done < "$JOBS_FILE"
 
