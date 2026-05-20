@@ -29,9 +29,11 @@ backup/
     schedule.sh        # Install backup schedule on one host
     schedule-all.sh    # Install backup schedules on all hosts
     status-all.sh      # Check status across all hosts
-    check-and-email.sh # Collect status and email daily digest
   backup.sh            # Unified runtime command: plan|run|status
   jobs.txt             # Unified host + job config
+  archive/             # Archived non-active scripts
+    check-and-email.sh
+    install-email-cron.sh
   _old/                # Archived previous scripts
   AGENTS.md            # This file
 ```
@@ -61,18 +63,12 @@ For WSL hosts, `os=wsl` tells bin scripts to wrap commands with `wsl.exe -e bash
 
 ---
 
-## Daily Email Digest
+## Archived Email Automation
 
-`bin/check-and-email.sh` collects status from all hosts and emails a daily digest to `chuck@eye-hand.wustl.edu` (aliased to `charles.d.holmes@gmail.com`).
+Email digest automation is currently not active. The previous scripts are preserved in:
 
-- Runs daily at **8:30 AM** via cron on `eye-hand`
-- Sends via local `sendmail -t` when running on `eye-hand` (otherwise relays via `ssh eye "sendmail -t"`)
-- Subject encodes overall health: `[backup] OK`, `WARNING`, `RUNNING`, or `FAILED`
-- Reports per-host: overall status, last run age, per-job pending files/bytes, disk avail/used
-- Detects still-running backups via `pgrep -f "backup.sh run"` on each host
-- Log: `~/.local/state/backup-kit/email.log`
-- Install/update cron on eye-hand: `make install-email`
-- Dry run: `bash bin/check-and-email.sh --dry-run`
+- `archive/check-and-email.sh`
+- `archive/install-email-cron.sh`
 
 ---
 
