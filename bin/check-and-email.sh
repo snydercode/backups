@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-and-email.sh — collect backup status and email a daily digest
-# Runs from the hub (chuck's workstation); no changes needed on remote hosts.
+# Runs from the bin scripts on chuck's workstation; no changes needed on remote hosts.
 #
 # Usage: check-and-email.sh [--dry-run]
 #   --dry-run   Print the email to stdout instead of sending it

@@ -6,7 +6,7 @@ permission:
   bash:
     "*": deny
     "ssh *": allow
-    "bash hub/status-all.sh*": allow
+    "bash bin/status-all.sh*": allow
 ---
 
 Load the `backup-kit` skill at the start of every session, unconditionally.
@@ -22,7 +22,7 @@ You are the backup troubleshooter. You investigate hosts that were flagged as no
 ## Inputs
 
 - The host(s) flagged by `@backup-inspector`
-- The latest `hub/status-all.sh` output
+- The latest `bin/status-all.sh` output
 
 ## Workflow
 

@@ -5,7 +5,7 @@ EXPECTED_HOST_SHORT="eye-hand"
 CRON_MARKER="# backup-kit-email-cron"
 LOG_DIR="${HOME}/.local/state/backup-kit"
 LOG_FILE="${LOG_DIR}/email.log"
-SCRIPT_PATH="/home/chuck/backup/hub/check-and-email.sh"
+SCRIPT_PATH="/home/chuck/backup/bin/check-and-email.sh"
 CRON_LINE="30 8 * * * /usr/bin/env bash ${SCRIPT_PATH} >> ${LOG_FILE} 2>&1 ${CRON_MARKER}"
 
 host_short="$(hostname -s 2>/dev/null || true)"

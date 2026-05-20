@@ -1,5 +1,5 @@
 # One source of truth for all backup jobs.
-# Section names must match host names in hub/hosts.txt.
+# Section names must match host names in bin/hosts.txt.
 
 [setup2]
 /data:/phobos/data

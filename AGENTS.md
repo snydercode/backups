@@ -23,7 +23,7 @@ All code is Bash — no Python, no build step, no compilation.
 
 ```
 backup/
-  hub/
+  bin/
     hosts.txt          # Host list (hostname or hostname:wsl:windowsuser)
     deploy.sh          # Push runtime to one host
     deploy-all.sh      # Push runtime to all hosts
@@ -59,13 +59,13 @@ ephys7:wsl:Toor
 
 The `:wsl` suffix tells deploy/status scripts to wrap commands with `wsl.exe -e bash -lc "..."`.
 
-**Key rule**: `hub/` scripts run from this repo; `runtime/` scripts are deployed to `~/backup-kit/` on each host.
+**Key rule**: `bin/` scripts run from this repo; `backup.sh` is deployed to `~/backup-kit/` on each host.
 
 ---
 
 ## Daily Email Digest
 
-`hub/check-and-email.sh` collects status from all hosts and emails a daily digest to `chuck@eye-hand.wustl.edu` (aliased to `charles.d.holmes@gmail.com`).
+`bin/check-and-email.sh` collects status from all hosts and emails a daily digest to `chuck@eye-hand.wustl.edu` (aliased to `charles.d.holmes@gmail.com`).
 
 - Runs daily at **8:30 AM** via cron on `eye-hand`
 - Sends via local `sendmail -t` when running on `eye-hand` (otherwise relays via `ssh eye "sendmail -t"`)
@@ -74,7 +74,7 @@ The `:wsl` suffix tells deploy/status scripts to wrap commands with `wsl.exe -e 
 - Detects still-running backups via `pgrep -f backup-run.sh` on each host
 - Log: `~/.local/state/backup-kit/email.log`
 - Install/update cron on eye-hand: `make install-email`
-- Dry run: `bash hub/check-and-email.sh --dry-run`
+- Dry run: `bash bin/check-and-email.sh --dry-run`
 
 ---
 
@@ -84,7 +84,7 @@ These commands are safe for agents to run anytime:
 
 ```bash
 # Check status across all hosts
-bash hub/status-all.sh
+bash bin/status-all.sh
 
 # Check status on one host
 ssh setup7 '~/backup-kit/backup-status.sh'
@@ -102,16 +102,16 @@ These commands make changes — confirm with user before running:
 
 ```bash
 # Deploy scripts to all hosts
-bash hub/deploy-all.sh
+bash bin/deploy-all.sh
 
 # Deploy scripts to one host
-bash hub/deploy.sh setup3
+bash bin/deploy.sh setup3
 
 # Schedule backups on all hosts
-bash hub/schedule-all.sh
+bash bin/schedule-all.sh
 
 # Schedule backup on one host
-bash hub/schedule.sh setup3
+bash bin/schedule.sh setup3
 
 # Run backup on one host (actually copies files)
 ssh setup3 '~/backup-kit/backup-run.sh'
@@ -158,7 +158,7 @@ overall_status=OK
 
 When asked to verify backup health:
 
-1. Run `bash hub/status-all.sh --short` for a quick overview of all hosts
+1. Run `bash bin/status-all.sh --short` for a quick overview of all hosts
 2. Look for `overall_status=` on each host — anything not `OK` needs investigation
 3. For ephys7 `/mnt/f` (disabled): treat as informational, not failure
 
@@ -200,7 +200,7 @@ For each problem host, report:
 - **Host**: name
 - **Symptom**: what `status-all.sh` showed (e.g., `overall=STALE age=48h`)
 - **Cause**: what the triage found (e.g., "cron entry missing")
-- **Fix**: what the user should do (e.g., "run `bash hub/schedule.sh setup3`")
+- **Fix**: what the user should do (e.g., "run `bash bin/schedule.sh setup3`")
 
 ---
 

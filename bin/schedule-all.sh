@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-all.sh — deploy runtime to every host
+# schedule-all.sh — install backup schedules on all hosts
 
 set -e
 
@@ -16,11 +16,11 @@ done < "$HOSTS_FILE"
 
 failed=0
 
-echo "Deploying backup-kit to ${#HOSTS[@]} hosts..."
+echo "Scheduling backups on ${#HOSTS[@]} hosts..."
 echo
 
 for host in "${HOSTS[@]}"; do
-    if ! "$SCRIPT_DIR/deploy.sh" "$host"; then
+    if ! "$SCRIPT_DIR/schedule.sh" "$host"; then
         echo "FAILED: $host"
         failed=1
     fi
@@ -28,13 +28,12 @@ for host in "${HOSTS[@]}"; do
 done
 
 if [[ "$failed" -ne 0 ]]; then
-    echo "Deployment finished with failures."
+    echo "Scheduling finished with failures."
     exit 1
 fi
 
-echo "Deployment complete."
+echo "Scheduling complete."
 echo
 echo "Next steps:"
-echo "  1. Run 'bash hub/status-all.sh' to verify deployment"
-echo "  2. Test on one host: ssh <host> '~/backup-kit/backup.sh plan'"
-echo "  3. Schedule backups (see AGENTS.md for cron/Task Scheduler setup)"
+echo "  1. Run 'bash bin/status-all.sh' to verify backup health"
+echo "  2. Wait for scheduled time (01:00) or manually test: ssh <host> '~/backup-kit/backup.sh run'"

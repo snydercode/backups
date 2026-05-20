@@ -17,7 +17,7 @@ Use this skill when working in `/home/chuck/backup`.
 
 ## Ground truth command
 
-- Primary status command: `bash hub/status-all.sh`
+- Primary status command: `bash bin/status-all.sh`
 
 ## Status semantics
 
@@ -45,14 +45,14 @@ For any host not OK, check in this order and stop when root cause is clear:
 
 Allowed read-only actions:
 
-- `bash hub/status-all.sh`
+- `bash bin/status-all.sh`
 - `ssh <host> ...` read-only checks/log reads
 
 Never run without explicit user approval:
 
 - `backup-run.sh`
-- `hub/deploy*.sh`
-- `hub/schedule*.sh`
+- `bin/deploy*.sh`
+- `bin/schedule*.sh`
 - any command that edits crontab or Task Scheduler
 - any command that modifies files on hosts
 
