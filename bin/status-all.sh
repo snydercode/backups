@@ -5,7 +5,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOSTS_FILE="$SCRIPT_DIR/hosts.txt"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_FILE="$REPO_DIR/jobs.txt"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 
@@ -46,20 +47,48 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Parse hosts.txt into parallel arrays: HOSTS and IS_WSL
+# Parse jobs.txt into parallel arrays: HOSTS and IS_WSL
 HOSTS=()
 IS_WSL=()
-while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    host="${line%%:*}"
-    if [[ "$line" == *":wsl"* ]]; then
+while IFS='|' read -r host os; do
+    [[ -z "$host" ]] && continue
+    if [[ "$os" != "linux" && "$os" != "wsl" ]]; then
+        echo "ERROR: host '$host' has invalid or missing os in $CONFIG_FILE" >&2
+        exit 1
+    fi
+    HOSTS+=("$host")
+    if [[ "$os" == "wsl" ]]; then
         IS_WSL+=("1")
     else
         IS_WSL+=("0")
     fi
-    HOSTS+=("$host")
-done < "$HOSTS_FILE"
+done < <(
+    awk '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        /^[[:space:]]*\[/ {
+            section=$0
+            sub(/^[[:space:]]*\[/, "", section)
+            sub(/\][[:space:]]*$/, "", section)
+            next
+        }
+        section != "" {
+            line=$0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line ~ /^os=/) {
+                os=line
+                sub(/^os=/, "", os)
+                print section "|" os
+                section=""
+            }
+        }
+    ' "$CONFIG_FILE"
+)
+
+if [[ ${#HOSTS[@]} -eq 0 ]]; then
+    echo "ERROR: no hosts found in $CONFIG_FILE" >&2
+    exit 1
+fi
 
 fetch_host_status() {
     local host="$1"

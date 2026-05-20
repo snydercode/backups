@@ -5,30 +5,74 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOSTS_FILE="$SCRIPT_DIR/hosts.txt"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_FILE="$REPO_DIR/jobs.txt"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
 SCHEDULE_TIME="01:00"
 
-# Parse hosts.txt into parallel arrays: HOSTS and IS_WSL
+# Parse jobs.txt into parallel arrays: HOSTS, IS_WSL, and WIN_USERS
 HOSTS=()
 IS_WSL=()
 WIN_USERS=()
-while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    host="${line%%:*}"
-    if [[ "$line" == *":wsl"* ]]; then
+USERS=()
+while IFS='|' read -r host os user win_user; do
+    [[ -z "$host" ]] && continue
+    if [[ "$os" != "linux" && "$os" != "wsl" ]]; then
+        echo "ERROR: host '$host' has invalid or missing os in $CONFIG_FILE" >&2
+        exit 1
+    fi
+    if [[ -z "$user" ]]; then
+        echo "ERROR: host '$host' missing user in $CONFIG_FILE" >&2
+        exit 1
+    fi
+    HOSTS+=("$host")
+    USERS+=("$user")
+    if [[ "$os" == "wsl" ]]; then
         IS_WSL+=("1")
-        win_user_field=$(echo "$line" | cut -d: -f3)
-        WIN_USERS+=("$win_user_field")
+        WIN_USERS+=("$win_user")
     else
         IS_WSL+=("0")
         WIN_USERS+=("")
     fi
-    HOSTS+=("$host")
-done < "$HOSTS_FILE"
+done < <(
+    awk '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        /^[[:space:]]*\[/ {
+            if (section != "") {
+                print section "|" os "|" user "|" windows_user
+            }
+            section=$0
+            sub(/^[[:space:]]*\[/, "", section)
+            sub(/\][[:space:]]*$/, "", section)
+            os=""
+            user=""
+            windows_user=""
+            next
+        }
+        section != "" {
+            line=$0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line ~ /^os=/) {
+                os=line
+                sub(/^os=/, "", os)
+            } else if (line ~ /^user=/) {
+                user=line
+                sub(/^user=/, "", user)
+            } else if (line ~ /^windows_user=/) {
+                windows_user=line
+                sub(/^windows_user=/, "", windows_user)
+            }
+        }
+        END {
+            if (section != "") {
+                print section "|" os "|" user "|" windows_user
+            }
+        }
+    ' "$CONFIG_FILE"
+)
 
 usage() {
     echo "usage: $0 <host>" >&2
@@ -95,6 +139,11 @@ main() {
 
     local is_wsl="${IS_WSL[$HOST_INDEX]}"
     local win_user="${WIN_USERS[$HOST_INDEX]}"
+
+    if [[ "$is_wsl" == "1" && -z "$win_user" ]]; then
+        echo "ERROR: host '$host' is wsl but missing windows_user in $CONFIG_FILE" >&2
+        exit 1
+    fi
 
     echo "=== Scheduling backup on $host ==="
 

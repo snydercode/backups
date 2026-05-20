@@ -4,15 +4,20 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOSTS_FILE="$SCRIPT_DIR/hosts.txt"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_FILE="$REPO_DIR/jobs.txt"
 
-# Read host names (strip :wsl suffix)
+# Read host names from jobs.txt sections
 HOSTS=()
-while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    HOSTS+=("${line%%:*}")
-done < "$HOSTS_FILE"
+while IFS= read -r host || [[ -n "$host" ]]; do
+    [[ -z "$host" ]] && continue
+    HOSTS+=("$host")
+done < <(awk '/^[[:space:]]*\[/{h=$0; sub(/^[[:space:]]*\[/,"",h); sub(/\][[:space:]]*$/,"",h); print h}' "$CONFIG_FILE")
+
+if [[ ${#HOSTS[@]} -eq 0 ]]; then
+    echo "ERROR: no hosts found in $CONFIG_FILE" >&2
+    exit 1
+fi
 
 failed=0
 

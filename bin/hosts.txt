@@ -1,7 +1,0 @@
-# hosts.txt — backup hosts
-# Format: hostname (Linux) or hostname:wsl:windowsuser (Windows/WSL)
-setup2
-setup3
-setup7
-ephys3:wsl:admin
-ephys7:wsl:Toor

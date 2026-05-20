@@ -24,40 +24,38 @@ All code is Bash — no Python, no build step, no compilation.
 ```
 backup/
   bin/
-    hosts.txt          # Host list (hostname or hostname:wsl:windowsuser)
     deploy.sh          # Push runtime to one host
     deploy-all.sh      # Push runtime to all hosts
     schedule.sh        # Install backup schedule on one host
     schedule-all.sh    # Install backup schedules on all hosts
     status-all.sh      # Check status across all hosts
     check-and-email.sh # Collect status and email daily digest
-  runtime/
-    backup-sync.sh     # Core rsync logic (--mode plan|run)
-    backup-plan.sh     # Thin wrapper: show pending files/bytes
-    backup-run.sh      # Thin wrapper: execute backup
-    backup-status.sh   # Health summary (human + machine-readable)
-    jobs/
-      setup2.txt       # Host-specific job definitions
-      setup3.txt
-      setup7.txt
-      ephys3.txt
-      ephys7.txt
+  backup.sh            # Unified runtime command: plan|run|status
+  jobs.txt             # Unified host + job config
   _old/                # Archived previous scripts
   AGENTS.md            # This file
 ```
 
-### hosts.txt format
+### jobs.txt host config format
 
 ```
-# hostname (Linux) or hostname:wsl:windowsuser (Windows/WSL)
-setup2
-setup3
-setup7
-ephys3:wsl:admin
-ephys7:wsl:Toor
+[setup2]
+os=linux
+user=toor
+src=/data
+dest=/phobos/data
+dest=/deimos/data
+
+[ephys3]
+os=wsl
+user=toor
+windows_user=admin
+src=/mnt/d/data
+dest=/mnt/e/data
+dest=/mnt/f/data
 ```
 
-The `:wsl` suffix tells deploy/status scripts to wrap commands with `wsl.exe -e bash -lc "..."`.
+For WSL hosts, `os=wsl` tells bin scripts to wrap commands with `wsl.exe -e bash -lc "..."`.
 
 **Key rule**: `bin/` scripts run from this repo; `backup.sh` is deployed to `~/backup-kit/` on each host.
 
@@ -71,7 +69,7 @@ The `:wsl` suffix tells deploy/status scripts to wrap commands with `wsl.exe -e 
 - Sends via local `sendmail -t` when running on `eye-hand` (otherwise relays via `ssh eye "sendmail -t"`)
 - Subject encodes overall health: `[backup] OK`, `WARNING`, `RUNNING`, or `FAILED`
 - Reports per-host: overall status, last run age, per-job pending files/bytes, disk avail/used
-- Detects still-running backups via `pgrep -f backup-run.sh` on each host
+- Detects still-running backups via `pgrep -f "backup.sh run"` on each host
 - Log: `~/.local/state/backup-kit/email.log`
 - Install/update cron on eye-hand: `make install-email`
 - Dry run: `bash bin/check-and-email.sh --dry-run`
@@ -87,11 +85,11 @@ These commands are safe for agents to run anytime:
 bash bin/status-all.sh
 
 # Check status on one host
-ssh setup7 '~/backup-kit/backup-status.sh'
-ssh ephys3 'wsl.exe -e bash -lc "~/backup-kit/backup-status.sh"'
+ssh setup7 '~/backup-kit/backup.sh status'
+ssh ephys3 'wsl.exe -e bash -lc "~/backup-kit/backup.sh status"'
 
 # Preview pending changes (dry-run)
-ssh setup3 '~/backup-kit/backup-plan.sh'
+ssh setup3 '~/backup-kit/backup.sh plan'
 ```
 
 ---
@@ -114,14 +112,14 @@ bash bin/schedule-all.sh
 bash bin/schedule.sh setup3
 
 # Run backup on one host (actually copies files)
-ssh setup3 '~/backup-kit/backup-run.sh'
+ssh setup3 '~/backup-kit/backup.sh run'
 ```
 
 ---
 
 ## Status Output Format
 
-`backup-status.sh` outputs key=value lines for easy parsing:
+`backup.sh status` outputs key=value lines for easy parsing:
 
 ```
 host=setup3
@@ -167,8 +165,8 @@ When asked to verify backup health:
 Work through these checks **in order** — stop once you find the root cause:
 
 1. **Is a backup currently running?**
-   - Linux: `ssh <host> 'pgrep -af backup-run.sh'`
-   - WSL: `ssh <host> 'wsl.exe -e bash -lc "pgrep -af backup-run.sh"'`
+   - Linux: `ssh <host> 'pgrep -af "backup.sh run"'`
+   - WSL: `ssh <host> 'wsl.exe -e bash -lc "pgrep -af \"backup.sh run\""'`
    - If yes → normal, just report ETA based on pending bytes
 
 2. **Did the last run fail?** (`last_run_result` non-zero / `last_run_status=FAILED`)
@@ -221,7 +219,7 @@ All backups use these flags (append-only, safe):
 - `--inplace` (always use temp file + atomic rename)
 
 **Post-backup chmod pass**:
-After each successful rsync job, `backup-sync.sh` runs `make_readonly()` which sets all regular files in the destination to `444` (read-only). This prevents accidental overwrites or deletions of backed-up data.
+After each successful rsync job, `backup.sh run` runs `make_readonly()` which sets all regular files in the destination to `444` (read-only). This prevents accidental overwrites or deletions of backed-up data.
 - Only runs on clean rsync exit (exit code 0)
 - Skips files already at 444 for speed on repeat runs
 - Excludes `.rsync-partial/` temp dirs
@@ -237,7 +235,7 @@ After each successful rsync job, `backup-sync.sh` runs `make_readonly()` which s
 ```bash
 # Install cron job (1 AM daily)
 ssh setup3 '(crontab -l 2>/dev/null | grep -v backup-kit; \
-  echo "0 1 * * * /home/toor/backup-kit/backup-run.sh >> ~/.local/state/backup-kit/cron.log 2>&1") | crontab -'
+  echo "0 1 * * * /home/toor/backup-kit/backup.sh run >> ~/.local/state/backup-kit/cron.log 2>&1") | crontab -'
 
 # Remove cron job
 ssh setup3 '(crontab -l 2>/dev/null | grep -v backup-kit) | crontab -'
@@ -261,12 +259,12 @@ if the account is interactively logged in at 1 AM, which is expected on recordin
 ```bash
 # Create task (1 AM daily) — ephys3
 ssh ephys3 'schtasks.exe /Create /TN "BackupKit" \
-  /TR "wsl.exe -e bash -lc /home/toor/backup-kit/backup-run.sh" \
+  /TR "wsl.exe -e bash -lc /home/toor/backup-kit/backup.sh run" \
   /SC DAILY /ST 01:00 /RU admin /IT /F'
 
 # Create task (1 AM daily) — ephys7
 ssh ephys7 'schtasks.exe /Create /TN "BackupKit" \
-  /TR "wsl.exe -e bash -lc /home/toor/backup-kit/backup-run.sh" \
+  /TR "wsl.exe -e bash -lc /home/toor/backup-kit/backup.sh run" \
   /SC DAILY /ST 01:00 /RU Toor /IT /F'
 
 # Delete task
@@ -298,10 +296,7 @@ ssh ephys3 'schtasks.exe /Delete /TN "CinqBackupE" /F 2>nul; schtasks.exe /Delet
 
 ```
 ~/backup-kit/
-  backup-sync.sh
-  backup-plan.sh
-  backup-run.sh
-  backup-status.sh
+  backup.sh
   jobs.txt
 
 ~/.local/state/backup-kit/

@@ -8,7 +8,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOSTS_FILE="$SCRIPT_DIR/hosts.txt"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_FILE="$REPO_DIR/jobs.txt"
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 
 EMAIL_TO="chuck@eye-hand.wustl.edu"
@@ -24,17 +25,44 @@ LOCAL_HOST="$(hostname -s 2>/dev/null || hostname)"
 
 BEFORE_DATE="$(date +%Y-%m-%d)"
 
-# --- Parse hosts.txt ---
+# --- Parse jobs.txt host metadata ---
 
 HOSTS=()
 IS_WSL=()
-while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    host="${line%%:*}"
-    [[ "$line" == *":wsl"* ]] && IS_WSL+=("1") || IS_WSL+=("0")
+while IFS='|' read -r host os; do
+    [[ -z "$host" ]] && continue
+    if [[ "$os" != "linux" && "$os" != "wsl" ]]; then
+        echo "ERROR: host '$host' has invalid or missing os in $CONFIG_FILE" >&2
+        exit 1
+    fi
     HOSTS+=("$host")
-done < "$HOSTS_FILE"
+    if [[ "$os" == "wsl" ]]; then
+        IS_WSL+=("1")
+    else
+        IS_WSL+=("0")
+    fi
+done < <(
+    awk '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        /^[[:space:]]*\[/ {
+            section=$0
+            sub(/^[[:space:]]*\[/, "", section)
+            sub(/\][[:space:]]*$/, "", section)
+            next
+        }
+        section != "" {
+            line=$0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line ~ /^os=/) {
+                os=line
+                sub(/^os=/, "", os)
+                print section "|" os
+                section=""
+            }
+        }
+    ' "$CONFIG_FILE"
+)
 
 # --- Fetch status and running-check in parallel ---
 
