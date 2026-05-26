@@ -6,13 +6,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
+source "$REPO_DIR/lib/jobs.sh"
 
-# Read host names from jobs.txt sections
 HOSTS=()
 while IFS= read -r host || [[ -n "$host" ]]; do
     [[ -z "$host" ]] && continue
     HOSTS+=("$host")
-done < <(awk '/^[[:space:]]*\[/{h=$0; sub(/^[[:space:]]*\[/,"",h); sub(/\][[:space:]]*$/,"",h); print h}' "$CONFIG_FILE")
+done < <(jobs_list_hosts "$CONFIG_FILE")
 
 if [[ ${#HOSTS[@]} -eq 0 ]]; then
     echo "ERROR: no hosts found in $CONFIG_FILE" >&2
