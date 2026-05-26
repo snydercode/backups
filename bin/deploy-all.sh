@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
 source "$REPO_DIR/lib/jobs.sh"
+source "$REPO_DIR/lib/fleet.sh"
 
 HOSTS=()
 while IFS= read -r host || [[ -n "$host" ]]; do
@@ -19,20 +20,10 @@ if [[ ${#HOSTS[@]} -eq 0 ]]; then
     exit 1
 fi
 
-failed=0
-
 echo "Deploying backup-kit to ${#HOSTS[@]} hosts..."
 echo
 
-for host in "${HOSTS[@]}"; do
-    if ! "$SCRIPT_DIR/deploy.sh" "$host"; then
-        echo "FAILED: $host"
-        failed=1
-    fi
-    echo
-done
-
-if [[ "$failed" -ne 0 ]]; then
+if ! fleet_run_all "$SCRIPT_DIR/deploy.sh" "${HOSTS[@]}"; then
     echo "Deployment finished with failures."
     exit 1
 fi
