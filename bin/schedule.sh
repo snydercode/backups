@@ -9,6 +9,7 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
 source "$REPO_DIR/lib/jobs.sh"
 source "$REPO_DIR/lib/hosts.sh"
+source "$REPO_DIR/lib/remote.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
@@ -102,13 +103,13 @@ main() {
 
     # Preflight: check that backup-kit is deployed
     if [[ "$is_wsl" == "1" ]]; then
-        ssh "$host" "wsl.exe -e bash -lc \"test -x $REMOTE_KIT_DIR/backup.sh\"" || {
+        remote_exec "$host" "1" "test -x $REMOTE_KIT_DIR/backup.sh" || {
             echo "ERROR: backup-kit not deployed on $host. Run deploy.sh first." >&2
             exit 1
         }
         schedule_wsl "$host" "$win_user"
     else
-        ssh "$host" "test -x $REMOTE_KIT_DIR/backup.sh" || {
+        remote_exec "$host" "0" "test -x $REMOTE_KIT_DIR/backup.sh" || {
             echo "ERROR: backup-kit not deployed on $host. Run deploy.sh first." >&2
             exit 1
         }

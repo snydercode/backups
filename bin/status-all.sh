@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
 source "$REPO_DIR/lib/jobs.sh"
+source "$REPO_DIR/lib/remote.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 
@@ -87,14 +88,7 @@ fetch_host_status() {
         cmd="$cmd --before $before_date"
     fi
 
-    if [[ "$is_wsl" == "1" ]]; then
-        # Windows host — run via WSL
-        ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
-            "wsl.exe -e bash -lc \"$cmd\"" 2>&1
-    else
-        # Linux host — direct
-        ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$cmd" 2>&1
-    fi
+    remote_exec "$host" "$is_wsl" "$cmd" -o BatchMode=yes -o ConnectTimeout=10 2>&1
 }
 
 render_host_output() {
