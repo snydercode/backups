@@ -63,9 +63,7 @@ while IFS='|' read -r host os _user _windows_user; do
     else
         IS_WSL+=("0")
     fi
-done < <(
-    jobs_list_host_meta "$CONFIG_FILE"
-)
+done < <(jobs_list_host_meta "$CONFIG_FILE")
 
 if [[ ${#HOSTS[@]} -eq 0 ]]; then
     echo "ERROR: no hosts found in $CONFIG_FILE" >&2

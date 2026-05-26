@@ -18,7 +18,6 @@ SCHEDULE_TIME="01:00"
 HOSTS=()
 IS_WSL=()
 WIN_USERS=()
-USERS=()
 while IFS='|' read -r host os user win_user; do
     [[ -z "$host" ]] && continue
     if [[ "$os" != "linux" && "$os" != "wsl" ]]; then
@@ -30,7 +29,6 @@ while IFS='|' read -r host os user win_user; do
         exit 1
     fi
     HOSTS+=("$host")
-    USERS+=("$user")
     if [[ "$os" == "wsl" ]]; then
         IS_WSL+=("1")
         WIN_USERS+=("$win_user")
