@@ -7,12 +7,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
+source "$REPO_DIR/lib/jobs.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
 SCHEDULE_TIME="01:00"
 
-# Parse jobs.txt into parallel arrays: HOSTS, IS_WSL, and WIN_USERS
 HOSTS=()
 IS_WSL=()
 WIN_USERS=()
@@ -36,43 +36,7 @@ while IFS='|' read -r host os user win_user; do
         IS_WSL+=("0")
         WIN_USERS+=("")
     fi
-done < <(
-    awk '
-        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-        /^[[:space:]]*\[/ {
-            if (section != "") {
-                print section "|" os "|" user "|" windows_user
-            }
-            section=$0
-            sub(/^[[:space:]]*\[/, "", section)
-            sub(/\][[:space:]]*$/, "", section)
-            os=""
-            user=""
-            windows_user=""
-            next
-        }
-        section != "" {
-            line=$0
-            sub(/^[[:space:]]+/, "", line)
-            sub(/[[:space:]]+$/, "", line)
-            if (line ~ /^os=/) {
-                os=line
-                sub(/^os=/, "", os)
-            } else if (line ~ /^user=/) {
-                user=line
-                sub(/^user=/, "", user)
-            } else if (line ~ /^windows_user=/) {
-                windows_user=line
-                sub(/^windows_user=/, "", windows_user)
-            }
-        }
-        END {
-            if (section != "") {
-                print section "|" os "|" user "|" windows_user
-            }
-        }
-    ' "$CONFIG_FILE"
-)
+done < <(jobs_list_host_meta "$CONFIG_FILE")
 
 usage() {
     echo "usage: $0 <host>" >&2

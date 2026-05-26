@@ -8,37 +8,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_SCRIPT="$REPO_DIR/backup.sh"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
+source "$REPO_DIR/lib/jobs.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
 
 HOSTS=()
-
-while IFS='|' read -r host_name host_os; do
+while IFS= read -r host_name; do
+    [[ -z "$host_name" ]] && continue
     HOSTS+=("$host_name")
-done < <(
-    awk '
-        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-        /^[[:space:]]*\[/ {
-            section=$0
-            sub(/^[[:space:]]*\[/, "", section)
-            sub(/\][[:space:]]*$/, "", section)
-            os=""
-            next
-        }
-        section != "" {
-            line=$0
-            sub(/^[[:space:]]+/, "", line)
-            sub(/[[:space:]]+$/, "", line)
-            if (line ~ /^os=/) {
-                os=line
-                sub(/^os=/, "", os)
-                print section "|" os
-                section=""
-            }
-        }
-    ' "$CONFIG_FILE"
-)
+done < <(jobs_list_hosts "$CONFIG_FILE")
 
 usage() {
     echo "usage: $0 <host>" >&2
@@ -77,27 +56,7 @@ main() {
     }
 
     local host_block
-    host_block="$({
-        awk -v target="$host" '
-            BEGIN { in_target=0 }
-            /^[[:space:]]*#/ || /^[[:space:]]*$/ {
-                if (in_target) print
-                next
-            }
-            /^[[:space:]]*\[/ {
-                if ($0 ~ "^[[:space:]]*\\[" target "\\][[:space:]]*$") {
-                    in_target=1
-                    next
-                }
-                if (in_target) exit
-                in_target=0
-                next
-            }
-            {
-                if (in_target) print
-            }
-        ' "$CONFIG_FILE"
-    } || true)"
+    host_block="$(jobs_emit_host_block "$CONFIG_FILE" "$host")"
 
     if [[ -z "$host_block" ]]; then
         echo "ERROR: host '$host' not found in $CONFIG_FILE" >&2
@@ -107,37 +66,27 @@ main() {
     local host_os=""
     local host_user=""
     local host_windows_user=""
-    local host_src=""
     local host_jobs=""
-    local line key value
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        if [[ "$line" != *=* ]]; then
-            echo "ERROR: invalid line for host '$host': $line" >&2
-            exit 1
+    local host_src=""
+
+    while IFS='|' read -r row_host row_os row_user row_windows_user; do
+        if [[ "$row_host" == "$host" ]]; then
+            host_os="$row_os"
+            host_user="$row_user"
+            host_windows_user="$row_windows_user"
+            break
         fi
-        key="${line%%=*}"
-        value="${line#*=}"
-        key="${key//[[:space:]]/}"
-        value="${value##[[:space:]]}"
+    done < <(jobs_list_host_meta "$CONFIG_FILE")
 
-        case "$key" in
-            os) host_os="$value" ;;
-            user) host_user="$value" ;;
-            windows_user) host_windows_user="$value" ;;
-            src) host_src="$value" ;;
-            dest)
-                if [[ -z "$host_src" ]]; then
-                    echo "ERROR: host '$host' has dest before src in $CONFIG_FILE" >&2
-                    exit 1
-                fi
-                host_jobs+="$host_src:$value"$'\n'
-                ;;
-        esac
-    done <<< "$host_block"
+    if ! host_jobs="$(jobs_emit_host_jobs "$host_block")"; then
+        echo "ERROR: invalid host '$host' config structure in $CONFIG_FILE" >&2
+        exit 1
+    fi
 
-    host_jobs="${host_jobs%$'\n'}"
+    if [[ -n "$host_jobs" ]]; then
+        host_src="${host_jobs%%:*}"
+        host_src="${host_src%%$'\n'*}"
+    fi
 
     if [[ "$host_os" != "linux" && "$host_os" != "wsl" ]]; then
         echo "ERROR: host '$host' missing or invalid os=linux|wsl in $CONFIG_FILE" >&2
