@@ -9,6 +9,7 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_SCRIPT="$REPO_DIR/backup.sh"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
 source "$REPO_DIR/lib/jobs.sh"
+source "$REPO_DIR/lib/hosts.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
@@ -25,24 +26,11 @@ usage() {
     exit 2
 }
 
-# Returns 0 if host exists, sets HOST_INDEX
-host_index() {
-    local needle="$1"
-    local i
-    for i in "${!HOSTS[@]}"; do
-        if [[ "${HOSTS[$i]}" == "$needle" ]]; then
-            HOST_INDEX=$i
-            return 0
-        fi
-    done
-    return 1
-}
-
 main() {
     local host="${1:-}"
 
     [[ -n "$host" ]] || usage
-    host_index "$host" || usage
+    hosts_find_index "$host" "${HOSTS[@]}" >/dev/null || usage
 
     local tmp_jobs_file
 

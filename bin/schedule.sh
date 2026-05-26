@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
 source "$REPO_DIR/lib/jobs.sh"
+source "$REPO_DIR/lib/hosts.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
@@ -42,19 +43,6 @@ usage() {
     echo "usage: $0 <host>" >&2
     echo "known hosts: ${HOSTS[*]}" >&2
     exit 2
-}
-
-# Returns 0 if host exists, sets HOST_INDEX
-host_index() {
-    local needle="$1"
-    local i
-    for i in "${!HOSTS[@]}"; do
-        if [[ "${HOSTS[$i]}" == "$needle" ]]; then
-            HOST_INDEX=$i
-            return 0
-        fi
-    done
-    return 1
 }
 
 schedule_linux() {
@@ -97,12 +85,13 @@ schedule_wsl() {
 
 main() {
     local host="${1:-}"
+    local host_index
 
     [[ -n "$host" ]] || usage
-    host_index "$host" || usage
+    host_index="$(hosts_find_index "$host" "${HOSTS[@]}")" || usage
 
-    local is_wsl="${IS_WSL[$HOST_INDEX]}"
-    local win_user="${WIN_USERS[$HOST_INDEX]}"
+    local is_wsl="${IS_WSL[$host_index]}"
+    local win_user="${WIN_USERS[$host_index]}"
 
     if [[ "$is_wsl" == "1" && -z "$win_user" ]]; then
         echo "ERROR: host '$host' is wsl but missing windows_user in $CONFIG_FILE" >&2
