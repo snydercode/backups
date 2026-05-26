@@ -2,6 +2,9 @@
 
 # Shared helpers for parsing jobs.txt.
 
+# Print host names, one per line.
+# Args: <config_file>
+# Returns: 0 on parse success, non-zero on awk failure.
 jobs_list_hosts() {
     local config_file="$1"
 
@@ -16,6 +19,9 @@ jobs_list_hosts() {
     ' "$config_file"
 }
 
+# Print host metadata rows as: host|os|user|windows_user
+# Args: <config_file>
+# Returns: 0 on parse success, non-zero on awk failure.
 jobs_list_host_meta() {
     local config_file="$1"
 
@@ -69,6 +75,9 @@ jobs_list_host_meta() {
     ' "$config_file"
 }
 
+# Emit the raw key=value lines for one host section.
+# Args: <config_file> <target_host>
+# Stdout: lines from matching section without [header].
 jobs_emit_host_block() {
     local config_file="$1"
     local target_host="$2"
@@ -97,6 +106,10 @@ jobs_emit_host_block() {
     ' "$config_file"
 }
 
+# Emit active src:dest job lines for one host block.
+# Args: <host_block_text>
+# Stdout: one src:dest pair per line.
+# Returns: 1 for malformed lines or dest before src.
 jobs_emit_host_jobs() {
     local host_block="$1"
 

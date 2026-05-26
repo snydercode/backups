@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # deploy-all.sh — deploy runtime to every host
+# Fleet wrapper over deploy.sh.
 
 set -e
 

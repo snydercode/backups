@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # schedule-all.sh — install backup schedules on all hosts
+# Fleet wrapper over schedule.sh.
 
 set -e
 

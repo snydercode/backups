@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # deploy.sh — push runtime to one backup host
 # Usage: deploy.sh <host>
+# Reads host metadata from jobs.txt via lib/jobs.sh.
 
 set -e
 

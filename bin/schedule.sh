@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # schedule.sh — install backup schedule on one host
 # Usage: schedule.sh <host>
+# Uses jobs metadata and installs cron or Task Scheduler entry.
 
 set -e
 

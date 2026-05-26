@@ -29,6 +29,11 @@ backup/
     schedule.sh        # Install backup schedule on one host
     schedule-all.sh    # Install backup schedules on all hosts
     status-all.sh      # Check status across all hosts
+  lib/
+    jobs.sh            # jobs.txt parsing helpers
+    hosts.sh           # Host lookup helpers
+    fleet.sh           # Shared host-loop execution helper
+    remote.sh          # Linux/WSL remote dispatch helper
   backup.sh            # Unified runtime command: plan|run|status
   jobs.txt             # Unified host + job config
   archive/             # Archived non-active scripts
@@ -60,6 +65,18 @@ dest=/mnt/f/data
 For WSL hosts, `os=wsl` tells bin scripts to wrap commands with `wsl.exe -e bash -lc "..."`.
 
 **Key rule**: `bin/` scripts run from this repo; `backup.sh` is deployed to `~/backup-kit/` on each host.
+
+### Code Map
+
+- `backup.sh`: deployed runtime on each host; performs `plan`, `run`, and `status`
+- `bin/deploy.sh`: deploy runtime and host-scoped jobs to one host
+- `bin/schedule.sh`: install schedule on one host (cron or Task Scheduler)
+- `bin/status-all.sh`: collect and render status from all hosts
+- `bin/deploy-all.sh`, `bin/schedule-all.sh`: fleet wrappers for one-host commands
+- `lib/jobs.sh`: parse `jobs.txt` into host lists, host metadata, and `src:dest` job lines
+- `lib/hosts.sh`: shared host index lookup
+- `lib/fleet.sh`: shared host iteration + failure aggregation
+- `lib/remote.sh`: shared Linux vs WSL remote command dispatch
 
 ---
 
@@ -152,7 +169,7 @@ overall_status=OK
 
 When asked to verify backup health:
 
-1. Run `bash bin/status-all.sh --short` for a quick overview of all hosts
+1. Run `bash bin/status-all.sh` for a quick overview of all hosts
 2. Look for `overall_status=` on each host — anything not `OK` needs investigation
 3. For ephys7 `/mnt/f` (disabled): treat as informational, not failure
 

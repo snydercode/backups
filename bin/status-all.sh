@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # status-all.sh — check backup status across all hosts
 # Calls remote status scripts and prints host output sequentially
+# Uses jobs metadata for host inventory and OS dispatch.
 
 set -e
 
