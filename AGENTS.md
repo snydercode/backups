@@ -120,28 +120,32 @@ ssh setup3 '~/backup-kit/backup.sh run'
 
 ## Status Output Format
 
-`backup.sh status` outputs key=value lines for easy parsing:
+`backup.sh status` outputs JSON for easy parsing:
 
-```
-host=setup3
-last_run_date=2026-02-22 01:00:15
-last_run_age_hours=12
-last_run_result=0
-last_run_status=OK
-
-job_0_src=/data
-job_0_dest=/phobos/data
-job_0_enabled=1
-job_0_pending_files=0
-job_0_pending_bytes=0
-job_0_dest_total_kb=3906886656
-job_0_dest_used_kb=2344131793
-job_0_dest_avail_kb=1562754863
-job_0_dest_avail_human=1.5TB
-job_0_dest_used_pct=60%
-job_0_status=UP_TO_DATE
-
-overall_status=OK
+```json
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-27T14:45:00Z",
+  "host": "setup3",
+  "last_run": {
+    "date": "2026-05-27 01:00:01",
+    "age_hours": 8,
+    "result": 0,
+    "status": "OK"
+  },
+  "overall_status": "OK",
+  "jobs": [
+    {
+      "src": "/data",
+      "dest": "/phobos/data",
+      "enabled": 1,
+      "pending_files": 0,
+      "pending_bytes": 0,
+      "status": "OK"
+    }
+  ],
+  "errors": []
+}
 ```
 
 **Status values**:

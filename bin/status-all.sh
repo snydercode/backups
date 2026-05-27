@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # status-all.sh — check backup status across all hosts
-# Calls remote status scripts and prints host output sequentially
-# Uses jobs metadata for host inventory and OS dispatch.
+# Fleet wrapper over status.sh with optional JSON summary.
 
 set -e
 
@@ -9,9 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
 source "$REPO_DIR/lib/jobs.sh"
-source "$REPO_DIR/lib/remote.sh"
+source "$REPO_DIR/lib/cli.sh"
 
-REMOTE_KIT_DIR="/home/toor/backup-kit"
+STATUS_ONE="$SCRIPT_DIR/status.sh"
 
 usage() {
     cat <<'EOF'
@@ -23,6 +22,12 @@ Options:
   --raw                       Print machine-parseable JSON output
   --before YYYY-MM-DD         Only count files modified before this date (default: today)
 EOF
+}
+
+die_arg() {
+    echo "ERROR: $*" >&2
+    usage >&2
+    exit 2
 }
 
 is_ssh_error() {
@@ -48,19 +53,18 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --before)
+            [[ $# -ge 2 ]] || die_arg "--before requires YYYY-MM-DD"
             before_date="$2"
+            is_valid_before_date "$before_date" || die_arg "invalid --before date '$before_date' (expected YYYY-MM-DD)"
             shift 2
             ;;
         *)
-            echo "ERROR: unknown argument: $1" >&2
-            usage >&2
-            exit 2
+            die_arg "unknown argument: $1"
             ;;
     esac
 done
 
 HOSTS=()
-IS_WSL=()
 while IFS='|' read -r host os _user _windows_user; do
     [[ -z "$host" ]] && continue
     if [[ "$os" != "linux" && "$os" != "wsl" ]]; then
@@ -68,11 +72,6 @@ while IFS='|' read -r host os _user _windows_user; do
         exit 1
     fi
     HOSTS+=("$host")
-    if [[ "$os" == "wsl" ]]; then
-        IS_WSL+=("1")
-    else
-        IS_WSL+=("0")
-    fi
 done < <(jobs_list_host_meta "$CONFIG_FILE")
 
 if [[ ${#HOSTS[@]} -eq 0 ]]; then
@@ -80,24 +79,10 @@ if [[ ${#HOSTS[@]} -eq 0 ]]; then
     exit 1
 fi
 
-fetch_host_status() {
-    local host="$1"
-    local is_wsl="$2"
-    local before_date="$3"
-
-    local cmd
-    if [[ "$RAW" == "1" ]]; then
-        cmd="$REMOTE_KIT_DIR/backup.sh status --raw"
-    else
-        cmd="$REMOTE_KIT_DIR/backup.sh status --human"
-    fi
-
-    if [[ -n "$before_date" ]]; then
-        cmd="$cmd --before $before_date"
-    fi
-
-    remote_exec "$host" "$is_wsl" "$cmd" -o BatchMode=yes -o ConnectTimeout=10 2>&1
-}
+if [[ ! -r "$STATUS_ONE" ]]; then
+    echo "ERROR: missing status helper: $STATUS_ONE" >&2
+    exit 1
+fi
 
 render_host_output() {
     local host="$1"
@@ -113,7 +98,12 @@ render_host_output() {
             printf "%-8s  [UNREACHABLE] ssh failed\n" "$host"
         else
             local first_line="${output%%$'\n'*}"
-            printf "%-8s  [ERROR] remote status command failed: %s\n" "$host" "$first_line"
+            if [[ "$first_line" == "LOCAL_WRAPPER_ERROR:"* ]]; then
+                first_line="${first_line#LOCAL_WRAPPER_ERROR: }"
+                printf "%-8s  [LOCAL_ERROR] %s\n" "$host" "$first_line"
+            else
+                printf "%-8s  [ERROR] remote status command failed: %s\n" "$host" "$first_line"
+            fi
         fi
         return
     fi
@@ -130,6 +120,9 @@ json_error_host() {
     if is_ssh_error "$output"; then
         err_type="ssh_failed"
         overall="UNREACHABLE"
+    elif [[ "$output" == "NON_JSON_RAW_PAYLOAD:"* ]]; then
+        err_type="raw_payload_not_json"
+        output="${output#NON_JSON_RAW_PAYLOAD: }"
     fi
 
     jq -cn \
@@ -165,14 +158,21 @@ json_hosts=()
 
 for i in "${!HOSTS[@]}"; do
     host="${HOSTS[$i]}"
-    is_wsl="${IS_WSL[$i]}"
 
-    if output="$(fetch_host_status "$host" "$is_wsl" "$before_date" 2>&1)"; then
+    cmd=("$STATUS_ONE" "$host")
+    if [[ "$RAW" == "1" ]]; then
+        cmd+=("--raw")
+    fi
+    if [[ -n "$before_date" ]]; then
+        cmd+=("--before" "$before_date")
+    fi
+
+    if output="$(bash "${cmd[@]}" 2>&1)"; then
         if [[ "$RAW" == "1" ]]; then
             if jq -e . >/dev/null 2>&1 <<< "$output"; then
                 json_hosts+=("$output")
             else
-                json_hosts+=("$(json_error_host "$host" "$output")")
+                json_hosts+=("$(json_error_host "$host" "NON_JSON_RAW_PAYLOAD: invalid raw payload from host")")
             fi
         fi
         render_host_output "$host" "1" "$output"

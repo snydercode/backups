@@ -31,13 +31,12 @@ usage: backup.sh <command> [options]
 Commands:
   plan                    Show pending files/bytes for all enabled jobs
   run                     Execute backup for all enabled jobs
-  status [--before DATE] [--human|--raw]
-                          Show status (JSON by default)
+  status [--before DATE] [--raw]
+                          Show status (JSON only)
 
 Options:
   --jobs <path>           Override jobs file (default: script-dir/jobs.txt)
   --before YYYY-MM-DD     Status cutoff date (only with status)
-  --human                 Human-readable status (only with status)
   --raw                   Machine-readable JSON status (only with status)
   -h, --help              Show this help
 EOF
@@ -249,7 +248,7 @@ latest_file_mtime() {
     echo "last_file_time=$latest_time"
 }
 
-status_machine_kv() {
+status_machine_json() {
     local jobs_file="$1"
     local before_date="$2"
 
@@ -278,31 +277,54 @@ status_machine_kv() {
         source "$RESULT_FILE"
     fi
 
+    local age_hours=-1
+    local last_run_status="NEVER_RUN"
+    local overall_status="UNKNOWN"
     local now
     now=$(date +%s)
-    local age_hours=-1
     if [[ "$last_run_epoch" -gt 0 ]]; then
         local age_seconds=$((now - last_run_epoch))
         age_hours=$((age_seconds / 3600))
-    fi
-
-    echo "host=$(hostname)"
-    if [[ "$last_run_epoch" -gt 0 ]]; then
-        echo "last_run_date=$last_run_date"
-        echo "last_run_age_hours=$age_hours"
-        echo "last_run_result=$last_run_result"
         if [[ "$last_run_result" == "0" ]]; then
-            echo "last_run_status=OK"
+            last_run_status="OK"
+            overall_status="OK"
         else
-            echo "last_run_status=FAILED"
+            last_run_status="FAILED"
+            overall_status="FAILED"
         fi
     else
-        echo "last_run_date=never"
-        echo "last_run_age_hours=-1"
-        echo "last_run_status=NEVER_RUN"
+        last_run_date="never"
+        overall_status="NEVER_RUN"
     fi
 
-    local job_index=0
+    json_escape() {
+        local s="$1"
+        s=${s//\\/\\\\}
+        s=${s//\"/\\\"}
+        s=${s//$'\n'/\\n}
+        s=${s//$'\r'/\\r}
+        s=${s//$'\t'/\\t}
+        printf '%s' "$s"
+    }
+
+    local host
+    host="$(hostname)"
+
+    local generated_at
+    generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    printf '{"schema_version":1,"generated_at":"%s","host":"%s","last_run":{' \
+        "$(json_escape "$generated_at")" "$(json_escape "$host")"
+    printf '"date":"%s","age_hours":%s,' "$(json_escape "$last_run_date")" "$age_hours"
+    if [[ "$last_run_epoch" -gt 0 ]]; then
+        printf '"result":%s,' "$last_run_result"
+    else
+        printf '"result":null,'
+    fi
+    printf '"status":"%s"},"overall_status":"%s","jobs":[' \
+        "$(json_escape "$last_run_status")" "$(json_escape "$overall_status")"
+
+    local first_job=1
     while IFS= read -r line || [ -n "$line" ]; do
         [[ "$line" =~ ^[[:space:]]*$ ]] && continue
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -310,236 +332,83 @@ status_machine_kv() {
         IFS=':' read -r src dest <<< "$line"
         [ -n "$src" ] && [ -n "$dest" ] || continue
 
-        echo "job_${job_index}_src=$src"
-        echo "job_${job_index}_dest=$dest"
-        echo "job_${job_index}_enabled=1"
-
         src_mtime_output=$(latest_file_mtime "$src" 2>&1) || true
         src_last_file_epoch=$(echo "$src_mtime_output" | grep '^last_file_epoch=' | cut -d= -f2)
         src_last_file_time=$(echo "$src_mtime_output" | grep '^last_file_time=' | cut -d= -f2-)
         src_last_file_epoch="${src_last_file_epoch:--1}"
         src_last_file_time="${src_last_file_time:-unknown}"
-        echo "job_${job_index}_src_last_file_epoch=$src_last_file_epoch"
-        echo "job_${job_index}_src_last_file_time=$src_last_file_time"
+
+        job_status="OK"
+        job_error=""
+        pending_files=0
+        pending_bytes=0
+        pending_human="0B"
+        dest_total_kb=""
+        dest_used_kb=""
+        dest_avail_kb=""
+        dest_avail_human="UNKNOWN"
+        dest_used_pct="UNKNOWN"
 
         sync_output=$(run_plan_one "$src" "$dest" "$max_age" 2>&1) || {
-            echo "job_${job_index}_status=ERROR"
-            echo "job_${job_index}_error=$sync_output"
-            job_index=$((job_index + 1))
-            continue
+            job_status="ERROR"
+            job_error="$sync_output"
+            sync_output=""
         }
 
-        pending_files=$(echo "$sync_output" | grep "^pending_files=" | cut -d= -f2)
-        pending_bytes=$(echo "$sync_output" | grep "^pending_bytes=" | cut -d= -f2)
-        pending_human=$(echo "$sync_output" | grep "^pending_human=" | cut -d= -f2)
+        if [[ "$job_status" != "ERROR" ]]; then
+            pending_files=$(echo "$sync_output" | grep '^pending_files=' | cut -d= -f2)
+            pending_bytes=$(echo "$sync_output" | grep '^pending_bytes=' | cut -d= -f2)
+            pending_human=$(echo "$sync_output" | grep '^pending_human=' | cut -d= -f2)
 
-        echo "job_${job_index}_pending_files=$pending_files"
-        echo "job_${job_index}_pending_bytes=$pending_bytes"
-        echo "job_${job_index}_pending_human=$pending_human"
-
-        if df_line=$(df -P "$dest" 2>/dev/null | tail -1); then
-            dest_total_kb=$(echo "$df_line" | awk '{print $2}')
-            dest_used_kb=$(echo "$df_line" | awk '{print $3}')
-            dest_avail_kb=$(echo "$df_line" | awk '{print $4}')
-            dest_used_pct=$(echo "$df_line" | awk '{print $5}')
-            if command -v numfmt &>/dev/null; then
-                dest_avail_human=$(
-                    numfmt --to=iec --suffix=B -- "${dest_avail_kb}000" 2>/dev/null \
-                        || echo "${dest_avail_kb}K"
-                )
-            else
-                dest_avail_human="${dest_avail_kb}K"
+            if df_line=$(df -P "$dest" 2>/dev/null | tail -1); then
+                dest_total_kb=$(echo "$df_line" | awk '{print $2}')
+                dest_used_kb=$(echo "$df_line" | awk '{print $3}')
+                dest_avail_kb=$(echo "$df_line" | awk '{print $4}')
+                dest_used_pct=$(echo "$df_line" | awk '{print $5}')
+                if command -v numfmt &>/dev/null; then
+                    dest_avail_human=$(
+                        numfmt --to=iec --suffix=B -- "${dest_avail_kb}000" 2>/dev/null \
+                            || echo "${dest_avail_kb}K"
+                    )
+                else
+                    dest_avail_human="${dest_avail_kb}K"
+                fi
             fi
-            echo "job_${job_index}_dest_total_kb=$dest_total_kb"
-            echo "job_${job_index}_dest_used_kb=$dest_used_kb"
-            echo "job_${job_index}_dest_avail_kb=$dest_avail_kb"
-            echo "job_${job_index}_dest_avail_human=$dest_avail_human"
-            echo "job_${job_index}_dest_used_pct=$dest_used_pct"
-        else
-            echo "job_${job_index}_dest_avail_human=UNKNOWN"
-            echo "job_${job_index}_dest_used_pct=UNKNOWN"
+
+            if [[ "$pending_files" != "0" ]]; then
+                job_status="PENDING"
+            fi
         fi
 
-        if [[ "$pending_files" == "0" ]]; then
-            echo "job_${job_index}_status=OK"
-        else
-            echo "job_${job_index}_status=PENDING"
+        if [[ $first_job -eq 0 ]]; then
+            printf ','
         fi
+        first_job=0
 
-        job_index=$((job_index + 1))
+        printf '{"src":"%s","dest":"%s","enabled":1,' \
+            "$(json_escape "$src")" "$(json_escape "$dest")"
+        printf '"src_last_file_epoch":%s,"src_last_file_time":"%s",' \
+            "$src_last_file_epoch" "$(json_escape "$src_last_file_time")"
+        printf '"pending_files":%s,"pending_bytes":%s,"pending_human":"%s",' \
+            "$pending_files" "$pending_bytes" "$(json_escape "$pending_human")"
+        if [[ -n "$dest_total_kb" ]]; then
+            printf '"dest_total_kb":%s,"dest_used_kb":%s,"dest_avail_kb":%s,' \
+                "$dest_total_kb" "$dest_used_kb" "$dest_avail_kb"
+        fi
+        printf '"dest_avail_human":"%s","dest_used_pct":"%s","status":"%s"' \
+            "$(json_escape "$dest_avail_human")" "$(json_escape "$dest_used_pct")" "$(json_escape "$job_status")"
+        if [[ -n "$job_error" ]]; then
+            printf ',"error":"%s"' "$(json_escape "$job_error")"
+        fi
+        printf '}'
     done < "$jobs_file"
 
-    if [[ "$last_run_result" != "0" && "$last_run_epoch" -gt 0 ]]; then
-        echo "overall_status=FAILED"
-    elif [[ "$last_run_epoch" -eq 0 ]]; then
-        echo "overall_status=NEVER_RUN"
-    else
-        echo "overall_status=OK"
-    fi
-}
-
-status_human() {
-    local jobs_file="$1"
-    local before_date="$2"
-
-    local output
-    output=$(status_machine_kv "$jobs_file" "$before_date")
-
-    local host="unknown"
-    local last_run_age_hours="-1"
-    local overall_status="UNKNOWN"
-    declare -A job
-    declare -A seen
-    local job_order=()
-
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ "$line" =~ ^([a-zA-Z0-9_]+)=(.*)$ ]] || continue
-        key="${BASH_REMATCH[1]}"
-        value="${BASH_REMATCH[2]}"
-        case "$key" in
-            host) host="$value" ;;
-            last_run_age_hours) last_run_age_hours="$value" ;;
-            overall_status) overall_status="$value" ;;
-            job_*)
-                if [[ "$key" =~ ^job_([0-9]+)_([a-z_]+)$ ]]; then
-                    idx="${BASH_REMATCH[1]}"
-                    field="${BASH_REMATCH[2]}"
-                    job["${idx}_${field}"]="$value"
-                    if [[ -z "${seen[$idx]:-}" ]]; then
-                        seen["$idx"]=1
-                        job_order+=("$idx")
-                    fi
-                fi
-                ;;
-        esac
-    done <<< "$output"
-
-    if [[ "$last_run_age_hours" =~ ^-?[0-9]+$ ]] && [[ "$last_run_age_hours" -ge 0 ]]; then
-        age_str="${last_run_age_hours}h ago"
-    else
-        age_str="never"
-    fi
-
-    overall_label="[$overall_status]"
-    case "$overall_status" in
-        OK) overall_label="[OK]" ;;
-        FAILED) overall_label="[FAILED]" ;;
-        NEVER_RUN) overall_label="[NEVER_RUN]" ;;
-    esac
-
-    printf "%-8s  %-12s last run %s\n" "$host" "$overall_label" "$age_str"
-
-    if [[ ${#job_order[@]} -eq 0 ]]; then
-        printf "          (no jobs)\n"
-        return 0
-    fi
-
-    for idx in "${job_order[@]}"; do
-        dest="${job["${idx}_dest"]:-?}"
-        status="${job["${idx}_status"]:-UNKNOWN}"
-        src_last_file_time="${job["${idx}_src_last_file_time"]:-unknown}"
-        pending_files="${job["${idx}_pending_files"]:-?}"
-        pending_human="${job["${idx}_pending_human"]:-?}"
-        dest_avail="${job["${idx}_dest_avail_human"]:-?}"
-        dest_total_kb="${job["${idx}_dest_total_kb"]:-}"
-        err="${job["${idx}_error"]:-}"
-
-        if [[ -n "$dest_total_kb" && "$dest_total_kb" =~ ^[0-9]+$ ]]; then
-            dest_total_human=$(
-                numfmt --to=iec --suffix=B --from-unit=1024 "$dest_total_kb" 2>/dev/null \
-                    || echo "${dest_total_kb}K"
-            )
-        else
-            dest_total_human="?"
-        fi
-
-        space_str="${dest_avail} of ${dest_total_human} free"
-
-        if [[ -n "$err" ]]; then
-            printf "          %-22s  [ERROR] %s   src last data %s\n" "$dest" "$err" "$src_last_file_time"
-        elif [[ "$status" == "OK" || "$status" == "UP_TO_DATE" ]]; then
-            printf "          %-22s  [OK]         %s   src last data %s\n" "$dest" "$space_str" "$src_last_file_time"
-        elif [[ "$status" == "PENDING" ]]; then
-            printf "          %-22s  [PENDING]    %s files (%s)   %s   src last data %s\n" \
-                "$dest" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
-        elif [[ "$status" == "STALE" ]]; then
-            printf "          %-22s  [STALE]      %s files (%s)   %s   src last data %s\n" \
-                "$dest" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
-        else
-            printf "          %-22s  [%s]  %s files (%s)   %s   src last data %s\n" \
-                "$dest" "$status" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
-        fi
-    done
-}
-
-status_machine_json() {
-    local jobs_file="$1"
-    local before_date="$2"
-
-    local kv_output
-    kv_output=$(status_machine_kv "$jobs_file" "$before_date")
-
-    printf '%s\n' "$kv_output" | jq -Rn --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
-        def as_int_or_string:
-            if test("^-?[0-9]+$") then tonumber else . end;
-
-        reduce inputs as $line (
-            {
-                schema_version: 1,
-                generated_at: $generated_at,
-                host: "",
-                last_run: {
-                    date: "never",
-                    age_hours: -1,
-                    result: null,
-                    status: "NEVER_RUN"
-                },
-                overall_status: "UNKNOWN",
-                jobs: []
-            };
-            if ($line | length) == 0 then
-                .
-            elif ($line | test("=")) | not then
-                .
-            else
-                ($line | capture("^(?<k>[^=]+)=(?<v>.*)$")) as $kv
-                | if $kv.k == "host" then
-                    .host = $kv.v
-                elif $kv.k == "last_run_date" then
-                    .last_run.date = $kv.v
-                elif $kv.k == "last_run_age_hours" then
-                    .last_run.age_hours = ($kv.v | as_int_or_string)
-                elif $kv.k == "last_run_result" then
-                    .last_run.result = ($kv.v | as_int_or_string)
-                elif $kv.k == "last_run_status" then
-                    .last_run.status = $kv.v
-                elif $kv.k == "overall_status" then
-                    .overall_status = $kv.v
-                elif ($kv.k | test("^job_[0-9]+_")) then
-                    ($kv.k | capture("^job_(?<idx>[0-9]+)_(?<field>[a-z0-9_]+)$")) as $m
-                    | ($m.idx | tonumber) as $idx
-                    | .jobs[$idx] = ((.jobs[$idx] // {}) + {
-                        ($m.field): (
-                            if ($m.field | test("(_files|_bytes|_kb|_epoch|_hours|enabled)$")) then
-                                ($kv.v | as_int_or_string)
-                            else
-                                $kv.v
-                            end
-                        )
-                    })
-                else
-                    .
-                end
-            end
-        )
-        | .jobs = [ .jobs[]? ]
-    '
+    printf '],"errors":[]}\n'
 }
 
 COMMAND=""
 JOBS_FILE="$DEFAULT_JOBS_FILE"
 BEFORE_DATE=""
-STATUS_MODE="raw"
 
 if [[ $# -eq 0 ]]; then
     usage
@@ -559,16 +428,7 @@ while [[ $# -gt 0 ]]; do
             BEFORE_DATE="$2"
             shift 2
             ;;
-        --human)
-            [[ "$STATUS_MODE" == "raw" ]] || die "--human and --raw are mutually exclusive"
-            STATUS_MODE="human"
-            shift
-            ;;
         --raw)
-            if [[ "$STATUS_MODE" != "raw" ]]; then
-                die "--human and --raw are mutually exclusive"
-            fi
-            STATUS_MODE="raw"
             shift
             ;;
         -h|--help)
@@ -591,11 +451,7 @@ case "$COMMAND" in
         run_for_all_jobs "run" "$JOBS_FILE"
         ;;
     status)
-        if [[ "$STATUS_MODE" == "human" ]]; then
-            status_human "$JOBS_FILE" "$BEFORE_DATE"
-        else
-            status_machine_json "$JOBS_FILE" "$BEFORE_DATE"
-        fi
+        status_machine_json "$JOBS_FILE" "$BEFORE_DATE"
         ;;
     *)
         die "unknown command: $COMMAND"
