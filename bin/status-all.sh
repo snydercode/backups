@@ -25,6 +25,15 @@ Options:
 EOF
 }
 
+is_ssh_error() {
+    local text="$1"
+    [[ "$text" == *"Connection timed out"* \
+    || "$text" == *"Could not resolve hostname"* \
+    || "$text" == *"Connection refused"* \
+    || "$text" == *"No route to host"* \
+    || "$text" == *"Permission denied"* ]]
+}
+
 before_date=""
 RAW=0
 
@@ -98,7 +107,7 @@ render_host_output() {
     if [[ "$RAW" == "1" ]]; then
         if [[ "$success" != "1" ]]; then
             local err_type="command_failed"
-            if [[ "$output" == *"Connection timed out"* || "$output" == *"Could not resolve hostname"* || "$output" == *"Connection refused"* || "$output" == *"No route to host"* || "$output" == *"Permission denied"* ]]; then
+            if is_ssh_error "$output"; then
                 err_type="ssh_failed"
             fi
             echo "host=$host"
@@ -117,7 +126,7 @@ render_host_output() {
     fi
 
     if [[ "$success" != "1" ]]; then
-        if [[ "$output" == *"Connection timed out"* || "$output" == *"Could not resolve hostname"* || "$output" == *"Connection refused"* || "$output" == *"No route to host"* || "$output" == *"Permission denied"* ]]; then
+        if is_ssh_error "$output"; then
             printf "%-8s  [UNREACHABLE] ssh failed\n" "$host"
         else
             local first_line="${output%%$'\n'*}"

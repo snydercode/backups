@@ -223,7 +223,10 @@ for i in "${!HOSTS[@]}"; do
 
         # Convert total KB to human-readable
         if [[ -n "$dest_total_kb" && "$dest_total_kb" =~ ^[0-9]+$ ]]; then
-            dest_total_human=$(numfmt --to=iec --suffix=B --from-unit=1024 "$dest_total_kb" 2>/dev/null || echo "${dest_total_kb}K")
+            dest_total_human=$(
+                numfmt --to=iec --suffix=B --from-unit=1024 "$dest_total_kb" 2>/dev/null \
+                    || echo "${dest_total_kb}K"
+            )
         else
             dest_total_human="?"
         fi

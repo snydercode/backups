@@ -11,8 +11,11 @@ CRON_LINE="30 8 * * * /usr/bin/env bash ${SCRIPT_PATH} >> ${LOG_FILE} 2>&1 ${CRO
 host_short="$(hostname -s 2>/dev/null || true)"
 host_full="$(hostname -f 2>/dev/null || true)"
 
-if [[ "${host_short}" != "${EXPECTED_HOST_SHORT}" && "${host_full}" != "${EXPECTED_HOST_SHORT}" && "${host_full}" != "${EXPECTED_HOST_SHORT}."* ]]; then
-    echo "ERROR: must run on ${EXPECTED_HOST_SHORT}. Detected host_short='${host_short}', host_full='${host_full}'" >&2
+if [[ "${host_short}" != "${EXPECTED_HOST_SHORT}" \
+   && "${host_full}" != "${EXPECTED_HOST_SHORT}" \
+   && "${host_full}" != "${EXPECTED_HOST_SHORT}."* ]]; then
+    echo "ERROR: must run on ${EXPECTED_HOST_SHORT}." \
+        "Detected host_short='${host_short}', host_full='${host_full}'" >&2
     exit 1
 fi
 

@@ -122,7 +122,9 @@ main() {
 
         echo "  copying jobs.txt ($host)"
         scp -q "$tmp_jobs_file" "$host:C:/Temp/jobs.txt"
-        ssh "$host" "wsl.exe -e bash -lc \"rm -f $REMOTE_KIT_DIR/jobs.txt && cp /mnt/c/Temp/jobs.txt $REMOTE_KIT_DIR/jobs.txt\""
+        ssh "$host" \
+            "wsl.exe -e bash -lc \"rm -f $REMOTE_KIT_DIR/jobs.txt \
+             && cp /mnt/c/Temp/jobs.txt $REMOTE_KIT_DIR/jobs.txt\""
 
         ssh "$host" "wsl.exe -e bash -lc \"chmod +x $REMOTE_KIT_DIR/*.sh\""
     else

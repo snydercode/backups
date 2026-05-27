@@ -129,7 +129,13 @@ run_plan_one() {
 
     local files bytes
     files=$(echo "$output" | awk '/Number of regular files transferred:/ { gsub(/,/, "", $NF); print $NF+0 }')
-    bytes=$(echo "$output" | awk -F': ' '/Total transferred file size:/ { gsub(/,/, "", $2); gsub(/ bytes/, "", $2); print $2+0 }')
+    bytes=$(echo "$output" | awk -F': ' '
+        /Total transferred file size:/ {
+            gsub(/,/, "", $2)
+            gsub(/ bytes/, "", $2)
+            print $2+0
+        }
+    ')
     files="${files:-0}"
     bytes="${bytes:-0}"
 
@@ -222,7 +228,14 @@ latest_file_mtime() {
     }
 
     local latest_epoch
-    latest_epoch=$(find "$path" -type f -printf '%T@\n' 2>/dev/null | awk 'BEGIN{m=-1} {if ($1>m) m=$1} END{if (m>=0) printf "%.0f", m; else print "-1"}')
+    latest_epoch=$(
+        find "$path" -type f -printf '%T@\n' 2>/dev/null |
+            awk '
+                BEGIN { m=-1 }
+                { if ($1 > m) m=$1 }
+                END { if (m >= 0) printf "%.0f", m; else print "-1" }
+            '
+    )
 
     if [[ "$latest_epoch" == "-1" ]]; then
         echo "last_file_epoch=-1"
@@ -330,7 +343,10 @@ status_machine() {
             dest_avail_kb=$(echo "$df_line" | awk '{print $4}')
             dest_used_pct=$(echo "$df_line" | awk '{print $5}')
             if command -v numfmt &>/dev/null; then
-                dest_avail_human=$(numfmt --to=iec --suffix=B -- "${dest_avail_kb}000" 2>/dev/null || echo "${dest_avail_kb}K")
+                dest_avail_human=$(
+                    numfmt --to=iec --suffix=B -- "${dest_avail_kb}000" 2>/dev/null \
+                        || echo "${dest_avail_kb}K"
+                )
             else
                 dest_avail_human="${dest_avail_kb}K"
             fi
@@ -429,7 +445,10 @@ status_human() {
         err="${job["${idx}_error"]:-}"
 
         if [[ -n "$dest_total_kb" && "$dest_total_kb" =~ ^[0-9]+$ ]]; then
-            dest_total_human=$(numfmt --to=iec --suffix=B --from-unit=1024 "$dest_total_kb" 2>/dev/null || echo "${dest_total_kb}K")
+            dest_total_human=$(
+                numfmt --to=iec --suffix=B --from-unit=1024 "$dest_total_kb" 2>/dev/null \
+                    || echo "${dest_total_kb}K"
+            )
         else
             dest_total_human="?"
         fi
@@ -441,11 +460,14 @@ status_human() {
         elif [[ "$status" == "OK" || "$status" == "UP_TO_DATE" ]]; then
             printf "          %-22s  [OK]         %s   src last data %s\n" "$dest" "$space_str" "$src_last_file_time"
         elif [[ "$status" == "PENDING" ]]; then
-            printf "          %-22s  [PENDING]    %s files (%s)   %s   src last data %s\n" "$dest" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
+            printf "          %-22s  [PENDING]    %s files (%s)   %s   src last data %s\n" \
+                "$dest" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
         elif [[ "$status" == "STALE" ]]; then
-            printf "          %-22s  [STALE]      %s files (%s)   %s   src last data %s\n" "$dest" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
+            printf "          %-22s  [STALE]      %s files (%s)   %s   src last data %s\n" \
+                "$dest" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
         else
-            printf "          %-22s  [%s]  %s files (%s)   %s   src last data %s\n" "$dest" "$status" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
+            printf "          %-22s  [%s]  %s files (%s)   %s   src last data %s\n" \
+                "$dest" "$status" "$pending_files" "$pending_human" "$space_str" "$src_last_file_time"
         fi
     done
 }
