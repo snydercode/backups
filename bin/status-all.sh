@@ -9,6 +9,7 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
 source "$REPO_DIR/lib/jobs.sh"
 source "$REPO_DIR/lib/cli.sh"
+source "$REPO_DIR/lib/status_schema.sh"
 
 STATUS_ONE="$SCRIPT_DIR/status.sh"
 
@@ -98,58 +99,12 @@ render_host_output() {
             printf "%-8s  [UNREACHABLE] ssh failed\n" "$host"
         else
             local first_line="${output%%$'\n'*}"
-            if [[ "$first_line" == "LOCAL_WRAPPER_ERROR:"* ]]; then
-                first_line="${first_line#LOCAL_WRAPPER_ERROR: }"
-                printf "%-8s  [LOCAL_ERROR] %s\n" "$host" "$first_line"
-            else
-                printf "%-8s  [ERROR] remote status command failed: %s\n" "$host" "$first_line"
-            fi
+            printf "%-8s  [ERROR] remote status command failed: %s\n" "$host" "$first_line"
         fi
         return
     fi
 
     echo "$output"
-}
-
-json_error_host() {
-    local host="$1"
-    local output="$2"
-    local err_type="command_failed"
-    local overall="ERROR"
-
-    if is_ssh_error "$output"; then
-        err_type="ssh_failed"
-        overall="UNREACHABLE"
-    elif [[ "$output" == "NON_JSON_RAW_PAYLOAD:"* ]]; then
-        err_type="raw_payload_not_json"
-        output="${output#NON_JSON_RAW_PAYLOAD: }"
-    fi
-
-    jq -cn \
-        --arg host "$host" \
-        --arg overall "$overall" \
-        --arg err_type "$err_type" \
-        --arg message "${output%%$'\n'*}" '
-        {
-            schema_version: 1,
-            host: $host,
-            reachable: false,
-            overall_status: $overall,
-            last_run: {
-                date: "unknown",
-                age_hours: -1,
-                result: null,
-                status: "UNKNOWN"
-            },
-            jobs: [],
-            errors: [
-                {
-                    type: $err_type,
-                    message: $message
-                }
-            ]
-        }
-    '
 }
 
 json_hosts=()
@@ -172,13 +127,13 @@ for i in "${!HOSTS[@]}"; do
             if jq -e . >/dev/null 2>&1 <<< "$output"; then
                 json_hosts+=("$output")
             else
-                json_hosts+=("$(json_error_host "$host" "NON_JSON_RAW_PAYLOAD: invalid raw payload from host")")
+                json_hosts+=("$(status_error_json "$host" "NON_JSON_RAW_PAYLOAD: invalid raw payload from host")")
             fi
         fi
         render_host_output "$host" "1" "$output"
     else
         if [[ "$RAW" == "1" ]]; then
-            json_hosts+=("$(json_error_host "$host" "$output")")
+            json_hosts+=("$(status_error_json "$host" "$output")")
         fi
         render_host_output "$host" "0" "$output"
     fi
