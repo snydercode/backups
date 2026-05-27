@@ -32,13 +32,13 @@ Commands:
   plan                    Show pending files/bytes for all enabled jobs
   run                     Execute backup for all enabled jobs
   status [--before DATE] [--human|--raw]
-                          Show status (machine-readable by default)
+                          Show status (JSON by default)
 
 Options:
   --jobs <path>           Override jobs file (default: script-dir/jobs.txt)
   --before YYYY-MM-DD     Status cutoff date (only with status)
   --human                 Human-readable status (only with status)
-  --raw                   Machine-readable status (only with status)
+  --raw                   Machine-readable JSON status (only with status)
   -h, --help              Show this help
 EOF
 }
@@ -249,7 +249,7 @@ latest_file_mtime() {
     echo "last_file_time=$latest_time"
 }
 
-status_machine() {
+status_machine_kv() {
     local jobs_file="$1"
     local before_date="$2"
 
@@ -383,7 +383,7 @@ status_human() {
     local before_date="$2"
 
     local output
-    output=$(status_machine "$jobs_file" "$before_date")
+    output=$(status_machine_kv "$jobs_file" "$before_date")
 
     local host="unknown"
     local last_run_age_hours="-1"
@@ -472,6 +472,70 @@ status_human() {
     done
 }
 
+status_machine_json() {
+    local jobs_file="$1"
+    local before_date="$2"
+
+    local kv_output
+    kv_output=$(status_machine_kv "$jobs_file" "$before_date")
+
+    printf '%s\n' "$kv_output" | jq -Rn --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+        def as_int_or_string:
+            if test("^-?[0-9]+$") then tonumber else . end;
+
+        reduce inputs as $line (
+            {
+                schema_version: 1,
+                generated_at: $generated_at,
+                host: "",
+                last_run: {
+                    date: "never",
+                    age_hours: -1,
+                    result: null,
+                    status: "NEVER_RUN"
+                },
+                overall_status: "UNKNOWN",
+                jobs: []
+            };
+            if ($line | length) == 0 then
+                .
+            elif ($line | test("=")) | not then
+                .
+            else
+                ($line | capture("^(?<k>[^=]+)=(?<v>.*)$")) as $kv
+                | if $kv.k == "host" then
+                    .host = $kv.v
+                elif $kv.k == "last_run_date" then
+                    .last_run.date = $kv.v
+                elif $kv.k == "last_run_age_hours" then
+                    .last_run.age_hours = ($kv.v | as_int_or_string)
+                elif $kv.k == "last_run_result" then
+                    .last_run.result = ($kv.v | as_int_or_string)
+                elif $kv.k == "last_run_status" then
+                    .last_run.status = $kv.v
+                elif $kv.k == "overall_status" then
+                    .overall_status = $kv.v
+                elif ($kv.k | test("^job_[0-9]+_")) then
+                    ($kv.k | capture("^job_(?<idx>[0-9]+)_(?<field>[a-z0-9_]+)$")) as $m
+                    | ($m.idx | tonumber) as $idx
+                    | .jobs[$idx] = ((.jobs[$idx] // {}) + {
+                        ($m.field): (
+                            if ($m.field | test("(_files|_bytes|_kb|_epoch|_hours|enabled)$")) then
+                                ($kv.v | as_int_or_string)
+                            else
+                                $kv.v
+                            end
+                        )
+                    })
+                else
+                    .
+                end
+            end
+        )
+        | .jobs = [ .jobs[]? ]
+    '
+}
+
 COMMAND=""
 JOBS_FILE="$DEFAULT_JOBS_FILE"
 BEFORE_DATE=""
@@ -501,8 +565,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --raw)
-            [[ "$STATUS_MODE" == "raw" || "$STATUS_MODE" == "human" ]] || true
-            if [[ "$STATUS_MODE" == "human" ]]; then
+            if [[ "$STATUS_MODE" != "raw" ]]; then
                 die "--human and --raw are mutually exclusive"
             fi
             STATUS_MODE="raw"
@@ -531,7 +594,7 @@ case "$COMMAND" in
         if [[ "$STATUS_MODE" == "human" ]]; then
             status_human "$JOBS_FILE" "$BEFORE_DATE"
         else
-            status_machine "$JOBS_FILE" "$BEFORE_DATE"
+            status_machine_json "$JOBS_FILE" "$BEFORE_DATE"
         fi
         ;;
     *)

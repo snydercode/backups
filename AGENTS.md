@@ -36,9 +36,6 @@ backup/
     remote.sh          # Linux/WSL remote dispatch helper
   backup.sh            # Unified runtime command: plan|run|status
   jobs.txt             # Unified host + job config
-  archive/             # Archived non-active scripts
-    check-and-email.sh
-    install-email-cron.sh
   _old/                # Archived previous scripts
   AGENTS.md            # This file
 ```
@@ -77,15 +74,6 @@ For WSL hosts, `os=wsl` tells bin scripts to wrap commands with `wsl.exe -e bash
 - `lib/hosts.sh`: shared host index lookup
 - `lib/fleet.sh`: shared host iteration + failure aggregation
 - `lib/remote.sh`: shared Linux vs WSL remote command dispatch
-
----
-
-## Archived Email Automation
-
-Email digest automation is currently not active. The previous scripts are preserved in:
-
-- `archive/check-and-email.sh`
-- `archive/install-email-cron.sh`
 
 ---
 

@@ -7,8 +7,6 @@ help:
 	@echo "  make status  # human fleet status"
 	@echo "  make deploy  # deploy runtime to all hosts"
 	@echo "  make schedule  # install schedules on all hosts"
-	@echo ""
-	@echo "Archived email scripts: archive/check-and-email.sh, archive/install-email-cron.sh"
 
 status:
 	bash bin/status-all.sh
