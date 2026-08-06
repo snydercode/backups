@@ -38,13 +38,13 @@ backup/
   backup.sh            # Unified runtime command: plan|run|status
   jobs.txt             # GENERATED host + job config (do not edit)
   _old/                # Archived previous scripts
-  AGENTS.md            # This file
+  CLAUDE.md            # This file
 ```
 
 ### jobs.txt host config format
 
 `jobs.txt` is a **generated artifact**. The canonical source of truth is the
-snyderverse fleet config (`snyderverse/fleet/config/fleet.yaml`), consumed via the
+snyderverse fleet config (`src/snyderverse/fleet/config/fleet.yaml` in the snyderverse repo), consumed via the
 public `snyderverse.fleet` Python API. Never hand-edit `jobs.txt`; edit the
 fleet config and regenerate:
 

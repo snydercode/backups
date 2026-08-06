@@ -56,9 +56,9 @@ fleet capture; jq null-concatenation triggers ruled out — null is identity for
       (avail is non-null). Exotic df output, but silently green.
       **Proposed fix:** treat `dest_total_kb == 0 or dest_avail_kb == 0` as
       DISK_UNKNOWN.
-- [ ] **AGENTS.md is stale where it is now load-bearing** — `AGENTS.md:171-215`
+- [ ] **CLAUDE.md is stale where it is now load-bearing** — `CLAUDE.md:171-215`
       **Why it's an issue:** the FAIL-path triage prompt tells an automated
-      agent to follow the AGENTS.md triage checklist, which references obsolete
+      agent to follow the CLAUDE.md triage checklist, which references obsolete
       flat field names (`last_run_result`, `job_N_status`, …) and status values
       (`UP_TO_DATE`, `STALE`) that the runtime no longer emits; `fleet_host`
       and the "match on fleet_host, never host" rule are undocumented.

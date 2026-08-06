@@ -56,7 +56,7 @@ Never run without explicit user approval:
 - any command that edits crontab or Task Scheduler
 - any command that modifies files on hosts
 
-For fix procedures and scheduling command details, read `AGENTS.md` in this repo root.
+For fix procedures and scheduling command details, read `CLAUDE.md` in this repo root.
 
 ## Reporting shape
 

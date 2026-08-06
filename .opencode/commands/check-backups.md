@@ -26,7 +26,7 @@ If any host is not OK:
 3. Synthesize a concise operator plan:
    - What is wrong (host-by-host)
    - Most likely root cause (with evidence)
-   - Exact copy-pasteable fix commands (from AGENTS.md-safe procedures)
+   - Exact copy-pasteable fix commands (from CLAUDE.md-safe procedures)
    - Verification commands to confirm the fix
 
 ## Rules

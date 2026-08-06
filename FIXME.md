@@ -5,7 +5,7 @@ This repo now treats `jobs.txt` as a generated artifact from Snyderverse fleet c
 What is already in place:
 - `bin/render-jobs-from-fleet.py` renders `jobs.txt` from `snyderverse.fleet`.
 - `Makefile` has `jobs` and `check-jobs` targets.
-- `AGENTS.md` documents `fleet.yaml` as source of truth.
+- `CLAUDE.md` documents `fleet.yaml` as source of truth.
 
 Remaining prescribed work (pilot-safe, non-blocking):
 

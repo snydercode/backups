@@ -8,12 +8,12 @@
 # guarantee rests on never letting an LLM (or a human skim) decide "all's well".
 # Every rule maps to a numbered gate rule in the weekly-check design spec.
 
-# Destinations under this are critical per AGENTS.md ("< 50GB remaining").
+# Destinations under this are critical per CLAUDE.md ("< 50GB remaining").
 # Units: GNU df -P 1024-byte blocks (assumes no POSIXLY_CORRECT on remote hosts).
 GATE_MIN_AVAIL_KB=50000000
 
 # Hours since last successful run before a host counts as stale.
-# Backups run daily at 1 AM; 30h allows one night of slack (AGENTS.md).
+# Backups run daily at 1 AM; 30h allows one night of slack (CLAUDE.md).
 GATE_MAX_RUN_AGE_HOURS=30
 
 # Only per-destination findings may be acknowledged. Host-level codes
