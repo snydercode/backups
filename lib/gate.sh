@@ -58,6 +58,8 @@ gate_evaluate() {
     local expected_hosts_json
     expected_hosts_json="$(printf '%s\n' "${expected_hosts[@]}" | jq -R . | jq -sc .)"
 
+    # FIXME: jq rc is unchecked — a runtime error aborts with zero findings and
+    # the gate fails OPEN (see ROADMAP.md "Review findings 2026-08-06").
     findings+="$(jq -r \
         --argjson expected_hosts "$expected_hosts_json" \
         --argjson expected_jobs "$expected_jobs_json" \

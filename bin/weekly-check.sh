@@ -195,6 +195,8 @@ Your final reply must be ONLY the report, plain text, per the 'Reporting
 format' section of AGENTS.md: for each problem host — Host / Symptom / Cause /
 Fix. No preamble, no code fences."
 
+# FIXME: Bash(ssh:*) is not read-only — arbitrary remote exec reachable from a
+# prompt embedding remote strings (see ROADMAP.md "Review findings 2026-08-06").
 report="$(cd "$REPO_DIR" && timeout "$TRIAGE_TIMEOUT" "$CLAUDE_BIN" -p "$triage_prompt" \
     --allowedTools "Read,Grep,Glob,Bash(ssh:*)" 2> "$run_dir/triage.err")"
 triage_rc=$?
