@@ -1,5 +1,19 @@
 # Roadmap
 
+## Open decisions
+
+- [ ] **Keep or revert the generated-jobs.txt pipeline** (2026-08-06)
+      jobs.txt is generated from the snyderverse fleet config
+      (`bin/render-jobs-from-fleet.py`, commits around e15cf9c). Spartan
+      review recommended reverting to a hand-edited jobs.txt: one consumer,
+      cross-repo dependency, and the renderer is more machinery than five
+      host blocks warrant. Counter-position (Claude): the fleet config is
+      already the single source of truth for host facts across repos, and
+      the `--check` drift guard plus CONFIG_MISMATCH make the pipeline
+      cheap to trust. Undecided — revisit if the renderer or the snyderverse
+      dependency causes friction; reverting is easy (commit the current
+      jobs.txt, delete the renderer and Makefile hook).
+
 ## Review findings — STALE_IDLE downgrade, feat/stale-idle-gate (2026-08-06)
 
 **Context:** Pre-merge adversarial review of the stale-but-idle gate change
