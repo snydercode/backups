@@ -124,6 +124,9 @@ run_plan_one() {
     fi
 
     local output
+    # FIXME: rsync rc unchecked — on failure the stats parse below defaults to
+    # pending 0 with job_status=OK (see ROADMAP "run_plan_one swallows rsync
+    # dry-run failures"). lib/gate.sh defends via src_last_file_epoch.
     output=$(rsync "${rsync_cmd[@]}" "$src/" "$dest/" 2>&1)
 
     local files bytes

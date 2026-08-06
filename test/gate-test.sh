@@ -125,6 +125,16 @@ check "stale with stringified age fails closed" \
     "$(mutate '.hosts[2].last_run.age_hours = "49"')" \
     1 FAIL:STALE_RUN "!INFO:STALE_IDLE"
 
+# A broken or empty source reports src_last_file_epoch=-1 while the rsync
+# dry-run parse defaults pending to 0 — that must not count as proof of idleness.
+check "stale with unreadable source is not idle" \
+    "$(mutate '.hosts[2].last_run.age_hours = 49 | .hosts[2].jobs[].src_last_file_epoch = -1')" \
+    1 FAIL:STALE_RUN "!INFO:STALE_IDLE"
+
+check "stale with missing src evidence fails closed" \
+    "$(mutate '.hosts[2].last_run.age_hours = 49 | del(.hosts[2].jobs[].src_last_file_epoch)')" \
+    1 FAIL:STALE_RUN "!INFO:STALE_IDLE"
+
 # An ERROR job reports default-zero pending counters ("dry-run never ran"),
 # which must not count as proof of idleness.
 check "stale with ERROR job is not idle" \

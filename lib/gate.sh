@@ -113,12 +113,19 @@ gate_evaluate() {
                         # job reports default-zero pending counters that mean
                         # "dry-run never ran", not "nothing pending"), or a
                         # pending counter that is missing or non-numeric.
+                        # src_last_file_epoch > 0 demands positive evidence the
+                        # source is readable and non-empty: backup.sh emits -1
+                        # when it cannot stat any source file, and its rsync
+                        # dry-run parse defaults pending to 0 on failure — a
+                        # host whose source disk vanished must not read as idle.
                         [$h.jobs[]?] as $jobs
                         | (($age | type) == "number" and $age >= 0
                            and ($jobs | length > 0)
                            and ($jobs | all(.status == "OK"
                                             and ([.pending_files, .pending_bytes]
-                                                 | all(type == "number" and . == 0))))) as $idle
+                                                 | all(type == "number" and . == 0))
+                                            and ((.src_last_file_epoch | type) == "number"
+                                                 and .src_last_file_epoch > 0)))) as $idle
                         | [{code: (if $idle then "STALE_IDLE" else "STALE_RUN" end),
                             key: "-",
                             detail: ("last successful run " + ($age | tostring)

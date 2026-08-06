@@ -1,5 +1,52 @@
 # Roadmap
 
+## Review findings — STALE_IDLE downgrade, feat/stale-idle-gate (2026-08-06)
+
+**Context:** Pre-merge adversarial review of the stale-but-idle gate change
+(d98b951) via @skeptic, @spartan, @side-effect-tracer, and @code-reviewer.
+Every finding below was verified by reproduction against the branch gate
+before filing; 0 raw findings dropped. The skeptic's rsync-version concern
+was resolved by checking all 5 hosts live (all ≥ 3.1.1, modern stats line).
+
+### Before merge
+
+- [x] **Idle proof accepted defaulted evidence (3 fail-open holes)** — `lib/gate.sh`
+      **Why it's an issue:** ERROR jobs, missing `pending_bytes`, and
+      stringified `age_hours` all passed the "provably idle" proof, so a stale
+      host with a dead mount plus an acked JOB_ERROR returned rc 0 forever —
+      an ack un-monitoring a host, which the ack design explicitly forbids.
+      **Fix applied (1d592b2):** idle requires numeric age ≥ 0, jobs listed,
+      every job `status == "OK"` with both pending counters strictly numeric
+      zero; 6 regression tests including the acked-JOB_ERROR trap.
+- [x] **Broken source reads as idle** — `lib/gate.sh` / `backup.sh:127-138`
+      **Why it's an issue:** `run_plan_one` never checks the rsync dry-run's
+      exit code and defaults `pending_files` to 0 with `status=OK`, so a host
+      whose source disk vanished (the ephys7 reboot scenario: same reboot
+      kills scheduler and D: mount) would report "provably idle, no data at
+      risk". Reproduced by the skeptic end-to-end.
+      **Fix applied:** idle proof additionally requires per-job
+      `src_last_file_epoch` numeric and > 0 — positive evidence the source
+      was readable and non-empty (backup.sh emits -1 when it can't stat any
+      source file). 2 regression tests.
+
+### Deferred
+
+- [ ] **`run_plan_one` swallows rsync dry-run failures** — `backup.sh:127-138`
+      **Why it's an issue:** rsync rc is unchecked; on failure the stats parse
+      yields `pending_files=0, status=OK` — a measurement that is really a
+      default. The gate now defends itself via `src_last_file_epoch`, but the
+      producer is still lying to every other consumer of status output.
+      **Proposed fix:** capture rsync's rc in `run_plan_one`; non-zero →
+      `job_status=ERROR` with the first stderr line. Producer change deployed
+      to all 5 hosts — land with the next deploy batch, with fixture updates.
+- [ ] **STALE_IDLE never escalates** — `lib/gate.sh`
+      **Why it's an issue:** a host stale 6 months renders identically to one
+      stale 49h; if any future proof bug appears, "quiet forever" is reachable.
+      A cap (idle beyond N days FAILs regardless) bounds the blast radius.
+      Deliberately deferred as a policy decision: ephys7 legitimately idles
+      for months between recording blocks, so any cap must exceed that.
+      **Proposed fix:** decide a ceiling (e.g. 90d) or explicitly accept none.
+
 ## Review findings — weekly backup check, feat/weekly-check (2026-08-06)
 
 **Context:** Pre-merge adversarial review of the automated weekly backup health
