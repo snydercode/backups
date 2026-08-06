@@ -28,7 +28,7 @@ source "$REPO_DIR/lib/gate.sh"
 # regeneration silently shrinking the set of hosts the gate can miss.
 readonly EXPECTED_HOST_COUNT=5
 
-readonly TODOIST_TASK="id:6hF55pP5VFXW8fV4"   # "Verify weekly backups", every Monday
+readonly TODOIST_TASK="id:6hF55pP5VFXW8fV4"   # "Verify lab backups are up to date", every Monday
 readonly EMAIL_TO="charles.d.holmes@gmail.com"
 readonly JOBS_FILE="$REPO_DIR/jobs.txt"
 readonly ACK_FILE="$REPO_DIR/check-ack.txt"
