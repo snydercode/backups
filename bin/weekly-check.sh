@@ -120,6 +120,7 @@ fi
 printf '%s\n' "$findings" > "$run_dir/findings.tsv"
 fail_lines="$(grep '^FAIL' <<< "$findings" || true)"
 ack_lines="$(grep '^ACK' <<< "$findings" || true)"
+info_lines="$(grep '^INFO' <<< "$findings" || true)"
 
 # --- prune old runs (never touches anything outside STATE_DIR/run-*) ---
 (cd "$STATE_DIR" && ls -dt run-*/ 2>/dev/null | tail -n +$((KEEP_RUNS + 1)) | xargs -r rm -rf --)
@@ -161,6 +162,12 @@ Hosts checked: $(jq '.hosts | length' "$run_dir/fleet.json")/$EXPECTED_HOST_COUN
 
 Acknowledged (not failing, see check-ack.txt):
 $(cut -f2- <<< "$ack_lines" | sed 's/\t/ /g')"
+    fi
+    if [[ -n "$info_lines" ]]; then
+        summary+="
+
+Informational (not failing):
+$(cut -f2- <<< "$info_lines" | sed 's/\t/ /g')"
     fi
 
     if ! "$TD_BIN" comment add "$TODOIST_TASK" --content "$summary" --quiet; then
@@ -228,6 +235,7 @@ Gate findings (status, host, code, key, detail — an ack line in check-ack.txt
 is fields 2-4 of a FAIL line):
 $fail_lines
 $([[ -n "$ack_lines" ]] && printf '\nAcknowledged, not failing:\n%s\n' "$ack_lines")
+$([[ -n "$info_lines" ]] && printf '\nInformational, not failing:\n%s\n' "$info_lines")
 ----------------------------------------------------------------------
 $report
 ----------------------------------------------------------------------

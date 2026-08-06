@@ -100,8 +100,22 @@ check "last run failed" \
     "$(mutate '.hosts[0].overall_status = "FAILED" | .hosts[0].last_run.result = 23 | .hosts[0].last_run.status = "FAILED"')" \
     1 FAIL:FAILED_RUN
 
-check "stale run behind OK status" \
-    "$(mutate '.hosts[2].last_run.age_hours = 49')" 1 FAIL:STALE_RUN
+check "stale run with pending files fails" \
+    "$(mutate '.hosts[2].last_run.age_hours = 49
+               | .hosts[2].jobs[0] |= (.status = "PENDING" | .pending_files = 3 | .pending_bytes = 9000000)')" \
+    1 FAIL:STALE_RUN "!INFO:STALE_IDLE"
+
+check "stale but provably idle downgrades to informational" \
+    "$(mutate '.hosts[2].last_run.age_hours = 49')" \
+    0 INFO:STALE_IDLE "!FAIL:STALE_RUN" NO_FAILURES
+
+check "stale with pending unprovable fails closed (field missing)" \
+    "$(mutate '.hosts[2].last_run.age_hours = 49 | del(.hosts[2].jobs[0].pending_files)')" \
+    1 FAIL:STALE_RUN "!INFO:STALE_IDLE"
+
+check "stale with unknown age fails closed" \
+    "$(mutate '.hosts[2].last_run.age_hours = -1')" \
+    1 FAIL:STALE_RUN "!INFO:STALE_IDLE"
 
 check "job error (missing mount) behind OK status" \
     "$(mutate '.hosts[3].jobs[0] |= (.status = "ERROR" | .error = "df: /phobos: No such file or directory" | del(.dest_avail_kb))')" \
@@ -158,7 +172,8 @@ check "ack matching is exact, not regex" \
 printf 'ephys7 STALE_RUN -\n' > "$WORK_DIR/ack-host.txt"
 GATE_TEST_ACK_FILE="$WORK_DIR/ack-host.txt" \
 check "host-level codes cannot be acked" \
-    "$(mutate '.hosts[1].last_run.age_hours = 49')" \
+    "$(mutate '.hosts[1].last_run.age_hours = 49
+               | .hosts[1].jobs[0] |= (.status = "PENDING" | .pending_files = 5 | .pending_bytes = 1000000)')" \
     1 FAIL:STALE_RUN "!ACK:STALE_RUN"
 
 check "stringified numeric field fails closed (jq coerces silently)" \

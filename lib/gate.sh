@@ -21,12 +21,20 @@ GATE_MAX_RUN_AGE_HOURS=30
 # un-monitor an entire host while the dead-man task keeps completing.
 GATE_ACKABLE_CODES=" DISK_LOW JOB_ERROR MISSING_JOB DISK_UNKNOWN UNRECOGNIZED_JOB_STATUS "
 
+# Informational codes: reported for visibility but never failing. STALE_IDLE is
+# a stale host whose every job proved pending_files == 0 — the scheduler is
+# dead but nothing on the source is unbacked-up, so alarming weekly would just
+# breed alarm fatigue. Accepted trade-off: when new data does land, the alarm
+# waits for the next weekly check (up to ~7 days of single-copy exposure).
+GATE_INFO_CODES=" STALE_IDLE "
+
 # Evaluate fleet status JSON against the local jobs config.
 # Args: <jobs_file> <expected_host_count> [ack_file]
 # Stdin: fleet JSON from status-all.sh --raw (host entries carry .fleet_host)
-# Stdout: one finding per line: FAIL|ACK <TAB> host <TAB> code <TAB> key <TAB> detail
+# Stdout: one finding per line: FAIL|ACK|INFO <TAB> host <TAB> code <TAB> key <TAB> detail
 #         (ACK = finding matched an ack_file entry; informational, not failing.
-#          An ack_file line is fields 2-4 of a FAIL line, whitespace-separated.)
+#          An ack_file line is fields 2-4 of a FAIL line, whitespace-separated.
+#          INFO = code in GATE_INFO_CODES; never failing, no ack needed.)
 # Returns: 0 no failing findings, 1 failing findings, 2 input invalid
 gate_evaluate() {
     local jobs_file="$1"
@@ -97,10 +105,26 @@ gate_evaluate() {
                 elif $h.overall_status == "OK" then
                     if (($h.last_run.age_hours // -1) < 0
                         or ($h.last_run.age_hours // -1) > $max_age_hours) then
-                        [{code: "STALE_RUN", key: "-",
-                          detail: ("last successful run "
-                                   + (($h.last_run.age_hours // -1) | tostring)
-                                   + "h ago (limit " + ($max_age_hours | tostring) + "h)")}]
+                        # G8 STALE_RUN vs G15 STALE_IDLE: a stale host downgrades
+                        # to informational only when it PROVES idle — age known,
+                        # jobs listed, and every job reports numeric zero
+                        # pending_files and pending_bytes. Anything unprovable
+                        # (missing field, no jobs, unknown age) stays a failure.
+                        (($h.last_run.age_hours // -1) >= 0
+                         and ([$h.jobs[]?] | length > 0)
+                         and ([$h.jobs[]?]
+                              | all((.pending_files | type) == "number"
+                                    and .pending_files == 0
+                                    and ((.pending_bytes // 0) | type) == "number"
+                                    and (.pending_bytes // 0) == 0))) as $idle
+                        | [{code: (if $idle then "STALE_IDLE" else "STALE_RUN" end),
+                            key: "-",
+                            detail: ("last successful run "
+                                     + (($h.last_run.age_hours // -1) | tostring)
+                                     + "h ago (limit " + ($max_age_hours | tostring) + "h)"
+                                     + (if $idle
+                                        then " — no files pending, scheduler likely dead but no data at risk"
+                                        else "" end))}]
                     else [] end
                 else
                     [{code: "UNRECOGNIZED_STATUS", key: "-",
@@ -189,7 +213,9 @@ gate_evaluate() {
     while IFS=$'\t' read -r host code key detail; do
         [[ -z "$code" ]] && continue
         status="FAIL"
-        if [[ "$GATE_ACKABLE_CODES" == *" $code "* ]] \
+        if [[ "$GATE_INFO_CODES" == *" $code "* ]]; then
+            status="INFO"
+        elif [[ "$GATE_ACKABLE_CODES" == *" $code "* ]] \
             && [[ -n "$ack_file" && -r "$ack_file" ]] \
             && awk -v h="$host" -v c="$code" -v k="$key" '
                    /^[[:space:]]*#/ { next }
