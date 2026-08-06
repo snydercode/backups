@@ -1,17 +1,19 @@
 # Acknowledged weekly-check findings — known chronic conditions that should not
 # fail the gate every Monday (alarm fatigue is its own silent-failure mode).
 #
-# Format: one finding per line, whitespace-separated:
+# Format: one finding per line, whitespace-separated, copied verbatim from
+# fields 2-4 (host, code, key) of a FAIL line in the check output or email:
 #   <host> <code> <key>
-# where <key> is the destination path for job-level codes (DISK_LOW, JOB_ERROR,
-# MISSING_JOB, DISK_UNKNOWN, UNRECOGNIZED_JOB_STATUS) and "-" for host-level
-# codes (STALE_RUN, DISCONNECTED, ...).
+# e.g. a FAIL line "FAIL  setup3  DISK_LOW  /phobos/data  ..." is acked by:
+#   setup3 DISK_LOW /phobos/data
+#
+# Only per-destination codes can be acked: DISK_LOW, JOB_ERROR, MISSING_JOB,
+# DISK_UNKNOWN, UNRECOGNIZED_JOB_STATUS. Host-level codes (DISCONNECTED,
+# STALE_RUN, ...) are refused by the gate on purpose — acking one would
+# un-monitor an entire host while the dead-man task keeps completing.
 #
 # Acked findings still appear in every PASS summary comment on the Todoist
 # task, so they stay visible. CAVEAT: an acked finding does not re-alarm when
 # it worsens (e.g. an acked DISK_LOW stays quiet as the disk keeps filling) —
 # remove the entry once the condition is fixed, and review this file whenever
 # you read a PASS summary.
-#
-# Example:
-#   setup3 DISK_LOW /phobos/data

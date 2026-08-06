@@ -12,14 +12,14 @@ fleet capture; jq null-concatenation triggers ruled out — null is identity for
 
 ### Before merge
 
-- [ ] **Gate fails open on jq runtime error** — `lib/gate.sh:61`
+- [x] **Gate fails open on jq runtime error** — `lib/gate.sh:61`
       **Why it's an issue:** the jq program's exit status is unchecked; a
       runtime error (reproduced: string-typed `dest_avail_kb` from one host)
       aborts it with zero findings → rc 0 → PASS → the dead-man task is
       completed on data the gate never evaluated. Inverts the core invariant.
       **Proposed fix:** capture jq's rc; on non-zero emit
       `FAIL - RUNNER_FAILURE <msg>` and return 2. Add a fixture test.
-- [ ] **Triage agent's `Bash(ssh:*)` grant is not read-only** — `bin/weekly-check.sh:199`
+- [x] **Triage agent's `Bash(ssh:*)` grant is not read-only** — `bin/weekly-check.sh:199`
       **Why it's an issue:** permits `ssh host '<anything>'` (writes, crontab
       edits) on all fleet hosts while the prompt embeds remote-originated
       strings (gate details, remote logs) — prompt-injection surface with
@@ -27,14 +27,14 @@ fleet capture; jq null-concatenation triggers ruled out — null is identity for
       **Proposed fix:** route remote access through a `bin/ssh-ro.sh` wrapper
       that allowlists read-only command prefixes and rejects shell
       metacharacters; grant `Bash(bash bin/ssh-ro.sh:*)` instead of `Bash(ssh:*)`.
-- [ ] **PASS re-run double-advances the recurrence** — `bin/weekly-check.sh:159`
+- [x] **PASS re-run double-advances the recurrence** — `bin/weekly-check.sh:159`
       **Why it's an issue:** completing a recurring Todoist task always consumes
       one occurrence (verified semantics), so a manual re-run on a PASS day
       pushes the due date out an extra week — the overdue alarm then lags a
       week, exactly the silence-looks-OK window the design forbids.
       **Proposed fix:** before completing, read the task's due date and skip
       completion (log it) when due is already in the future.
-- [ ] **Ack machinery: dropped key column, wrong documented key, regex
+- [x] **Ack machinery: dropped key column, wrong documented key, regex
       over-match, host-level codes ackable** — `lib/gate.sh:149-171`, `check-ack.txt`
       **Why it's an issue:** (a) the `key` needed to write an ack is consumed
       internally and never shown, and check-ack.txt documents the wrong key for

@@ -149,6 +149,26 @@ check "acknowledged finding passes but stays visible" \
     "$(mutate '.hosts[4].jobs[0].dest_avail_kb = 30000000')" \
     0 ACK:DISK_LOW NO_FAILURES
 
+printf 'setup7 DISK_LOW /phobos/dat.\n' > "$WORK_DIR/ack-regex.txt"
+GATE_TEST_ACK_FILE="$WORK_DIR/ack-regex.txt" \
+check "ack matching is exact, not regex" \
+    "$(mutate '.hosts[4].jobs[0].dest_avail_kb = 30000000')" \
+    1 FAIL:DISK_LOW "!ACK:DISK_LOW"
+
+printf 'ephys7 STALE_RUN -\n' > "$WORK_DIR/ack-host.txt"
+GATE_TEST_ACK_FILE="$WORK_DIR/ack-host.txt" \
+check "host-level codes cannot be acked" \
+    "$(mutate '.hosts[1].last_run.age_hours = 49')" \
+    1 FAIL:STALE_RUN "!ACK:STALE_RUN"
+
+check "stringified numeric field fails closed (jq coerces silently)" \
+    "$(mutate '.hosts[0].jobs[0].dest_avail_kb = "1294097432"')" \
+    1 FAIL:MALFORMED_FIELD
+
+check "gate fails closed on jq runtime error" \
+    "$(mutate '.hosts[2].last_run = "garbage"')" \
+    2 FAIL:RUNNER_FAILURE
+
 GATE_TEST_HOST_COUNT=6 \
 check "fleet config shrank vs expected count" \
     "$(cat "$HEALTHY")" 1 FAIL:CONFIG_MISMATCH
