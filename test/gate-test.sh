@@ -107,8 +107,16 @@ check "job error (missing mount) behind OK status" \
     "$(mutate '.hosts[3].jobs[0] |= (.status = "ERROR" | .error = "df: /phobos: No such file or directory" | del(.dest_avail_kb))')" \
     1 FAIL:JOB_ERROR "!FAIL:DISK_UNKNOWN"
 
-check "destination disk low" \
+check "destination disk low (large disk under absolute threshold)" \
     "$(mutate '.hosts[4].jobs[0].dest_avail_kb = 30000000 | .hosts[4].jobs[0].dest_avail_human = "29GB"')" \
+    1 FAIL:DISK_LOW
+
+check "small disk with proportional headroom passes" \
+    "$(mutate '.hosts[4].jobs[0] |= (.dest_total_kb = 30000000 | .dest_used_kb = 10000000 | .dest_avail_kb = 20000000 | .dest_avail_human = "19GB")')" \
+    0 NO_FAILURES
+
+check "pending backlog exceeds free space" \
+    "$(mutate '.hosts[4].jobs[0] |= (.dest_total_kb = 30000000 | .dest_avail_kb = 10000000 | .dest_avail_human = "9.5GB" | .status = "PENDING" | .pending_files = 40 | .pending_bytes = 12000000000 | .pending_human = "12GB")')" \
     1 FAIL:DISK_LOW
 
 check "backup never ran" \

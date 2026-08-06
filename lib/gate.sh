@@ -113,12 +113,26 @@ gate_evaluate() {
                   | {code: "UNRECOGNIZED_JOB_STATUS", key: .dest,
                      detail: (.dest + ": status=" + (.status | tostring))}
               ] + [
-                  # G11 DISK_LOW: destination under the critical threshold.
+                  # G11 DISK_LOW: destination lacks headroom. Threshold is the
+                  # smaller of the absolute critical limit and 20% of the disk —
+                  # some hosts back up small datasets to ~29GB disks that could
+                  # never hold 50GB free. Independently, a pending backlog
+                  # bigger than the free space fails tonight regardless of
+                  # thresholds.
                   $h.jobs[]? | select(.status != "ERROR")
-                  | select(.dest_avail_kb != null and .dest_avail_kb < $min_avail_kb)
+                  | select(.dest_avail_kb != null)
+                  | (if .dest_total_kb != null
+                     then ([$min_avail_kb, (.dest_total_kb / 5)] | min)
+                     else $min_avail_kb end) as $threshold
+                  | select(.dest_avail_kb < $threshold
+                           or ((.pending_bytes // 0) > .dest_avail_kb * 1024))
                   | {code: "DISK_LOW", key: .dest,
                      detail: (.dest + ": " + (.dest_avail_human // "?")
-                              + " free (critical threshold ~50GB)")}
+                              + " free — "
+                              + (if (.pending_bytes // 0) > .dest_avail_kb * 1024
+                                 then "pending backlog (" + (.pending_human // "?")
+                                      + ") exceeds free space"
+                                 else "below critical headroom threshold" end))}
               ] + [
                   # G12 DISK_UNKNOWN: df silently failed on a non-ERROR job.
                   $h.jobs[]? | select(.status != "ERROR")
