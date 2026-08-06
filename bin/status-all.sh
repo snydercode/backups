@@ -109,6 +109,14 @@ render_host_output() {
 
 json_hosts=()
 
+# Tag a host status JSON object with its jobs.txt section name. Remote payloads
+# report $(hostname), which can differ from the fleet name (ephys3 → oephys3),
+# so consumers must match on .fleet_host, never .host.
+tag_fleet_host() {
+    local host="$1"
+    jq -c --arg fleet_host "$host" '. + {fleet_host: $fleet_host}'
+}
+
 # --- main ---
 
 for i in "${!HOSTS[@]}"; do
@@ -125,15 +133,15 @@ for i in "${!HOSTS[@]}"; do
     if output="$(bash "${cmd[@]}" 2>&1)"; then
         if [[ "$RAW" == "1" ]]; then
             if jq -e . >/dev/null 2>&1 <<< "$output"; then
-                json_hosts+=("$output")
+                json_hosts+=("$(tag_fleet_host "$host" <<< "$output")")
             else
-                json_hosts+=("$(status_error_json "$host" "NON_JSON_RAW_PAYLOAD: invalid raw payload from host")")
+                json_hosts+=("$(status_error_json "$host" "NON_JSON_RAW_PAYLOAD: invalid raw payload from host" | tag_fleet_host "$host")")
             fi
         fi
         render_host_output "$host" "1" "$output"
     else
         if [[ "$RAW" == "1" ]]; then
-            json_hosts+=("$(status_error_json "$host" "$output")")
+            json_hosts+=("$(status_error_json "$host" "$output" | tag_fleet_host "$host")")
         fi
         render_host_output "$host" "0" "$output"
     fi
