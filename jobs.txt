@@ -1,13 +1,30 @@
 # backup-kit unified config
 #
-# Per-host required fields:
+# DO NOT EDIT. Generated from the snyderverse fleet config
+# (snyderverse/fleet/config/fleet.yaml) via bin/render-jobs-from-fleet.py.
+# Edit the fleet config and regenerate; manual edits will be overwritten.
+#
+# Per-host fields:
 #   os=linux|wsl
 #   user=<linux user>
 #   src=<source path>
 #   dest=<destination path>   (repeatable, at least one)
-#
-# Additional required field for WSL hosts:
-#   windows_user=<Windows account for Task Scheduler /RU>
+#   windows_user=<Windows account>   (wsl hosts only)
+
+[ephys3]
+os=wsl
+user=toor
+windows_user=admin
+src=/mnt/d/data
+dest=/mnt/e/data
+dest=/mnt/f/data
+
+[ephys7]
+os=wsl
+user=toor
+windows_user=Toor
+src=/mnt/d/data
+dest=/mnt/e/data
 
 [setup2]
 os=linux
@@ -29,20 +46,3 @@ user=toor
 src=/data
 dest=/phobos/data
 dest=/deimos/data
-
-[ephys3]
-os=wsl
-user=toor
-windows_user=admin
-src=/mnt/d/data
-dest=/mnt/e/data
-dest=/mnt/f/data
-
-[ephys7]
-os=wsl
-user=toor
-windows_user=Toor
-src=/mnt/d/data
-dest=/mnt/e/data
-# enable when F drive exists:
-# dest=/mnt/f/data

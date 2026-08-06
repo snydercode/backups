@@ -29,18 +29,37 @@ backup/
     schedule.sh        # Install backup schedule on one host
     schedule-all.sh    # Install backup schedules on all hosts
     status-all.sh      # Check status across all hosts
+    render-jobs-from-fleet.py  # Regenerate jobs.txt from the fleet config
   lib/
     jobs.sh            # jobs.txt parsing helpers
     hosts.sh           # Host lookup helpers
     fleet.sh           # Shared host-loop execution helper
     remote.sh          # Linux/WSL remote dispatch helper
   backup.sh            # Unified runtime command: plan|run|status
-  jobs.txt             # Unified host + job config
+  jobs.txt             # GENERATED host + job config (do not edit)
   _old/                # Archived previous scripts
   AGENTS.md            # This file
 ```
 
 ### jobs.txt host config format
+
+`jobs.txt` is a **generated artifact**. The canonical source of truth is the
+snyderverse fleet config (`snyderverse/fleet/config/fleet.yaml`), consumed via the
+public `snyderverse.fleet` Python API. Never hand-edit `jobs.txt`; edit the
+fleet config and regenerate:
+
+```
+# regenerate jobs.txt from the fleet config
+python3 bin/render-jobs-from-fleet.py
+# (or) make jobs
+
+# verify jobs.txt is not stale (CI / pre-deploy guard)
+python3 bin/render-jobs-from-fleet.py --check
+```
+
+The renderer requires the `snyderverse` package importable in the environment
+(set `PYTHONPATH` to its repo root, or install it). Hosts are emitted in
+alphabetical order; only hosts with a `backup` route in the fleet config appear.
 
 ```
 [setup2]
@@ -71,6 +90,7 @@ For WSL hosts, `os=wsl` tells bin scripts to wrap commands with `wsl.exe -e bash
 - `bin/status-all.sh`: collect and render status from all hosts
 - `bin/deploy-all.sh`, `bin/schedule-all.sh`: fleet wrappers for one-host commands
 - `lib/jobs.sh`: parse `jobs.txt` into host lists, host metadata, and `src:dest` job lines
+- `bin/render-jobs-from-fleet.py`: regenerate `jobs.txt` from the snyderverse fleet config (`--check` for drift)
 - `lib/hosts.sh`: shared host index lookup
 - `lib/fleet.sh`: shared host iteration + failure aggregation
 - `lib/remote.sh`: shared Linux vs WSL remote command dispatch
