@@ -25,7 +25,7 @@ mutate() {
     jq -c "$1" "$HEALTHY"
 }
 
-# Args: <output> <status FAIL|ACK> <code>
+# Args: <output> <status FAIL|ACK|INFO> <code>
 has_finding() {
     awk -F'\t' -v s="$2" -v c="$3" '$1 == s && $3 == c { found = 1 } END { exit !found }' <<< "$1"
 }
@@ -116,6 +116,29 @@ check "stale with pending unprovable fails closed (field missing)" \
 check "stale with unknown age fails closed" \
     "$(mutate '.hosts[2].last_run.age_hours = -1')" \
     1 FAIL:STALE_RUN "!INFO:STALE_IDLE"
+
+check "stale with missing pending_bytes fails closed" \
+    "$(mutate '.hosts[2].last_run.age_hours = 49 | del(.hosts[2].jobs[].pending_bytes)')" \
+    1 FAIL:STALE_RUN "!INFO:STALE_IDLE"
+
+check "stale with stringified age fails closed" \
+    "$(mutate '.hosts[2].last_run.age_hours = "49"')" \
+    1 FAIL:STALE_RUN "!INFO:STALE_IDLE"
+
+# An ERROR job reports default-zero pending counters ("dry-run never ran"),
+# which must not count as proof of idleness.
+check "stale with ERROR job is not idle" \
+    "$(mutate '.hosts[2].last_run.age_hours = 49
+               | .hosts[2].jobs[0] |= (.status = "ERROR" | .error = "df failed" | del(.dest_avail_kb))')" \
+    1 FAIL:STALE_RUN FAIL:JOB_ERROR "!INFO:STALE_IDLE"
+
+# The compounding trap: acking the JOB_ERROR must not let the stale host pass.
+printf 'setup2\tJOB_ERROR\t/phobos/data\n' > "$WORK_DIR/ack-joberr.txt"
+GATE_TEST_ACK_FILE="$WORK_DIR/ack-joberr.txt" \
+check "acked JOB_ERROR does not unlock idle downgrade" \
+    "$(mutate '.hosts[2].last_run.age_hours = 49
+               | .hosts[2].jobs[0] |= (.status = "ERROR" | .error = "df failed" | del(.dest_avail_kb))')" \
+    1 FAIL:STALE_RUN ACK:JOB_ERROR "!INFO:STALE_IDLE"
 
 check "job error (missing mount) behind OK status" \
     "$(mutate '.hosts[3].jobs[0] |= (.status = "ERROR" | .error = "df: /phobos: No such file or directory" | del(.dest_avail_kb))')" \

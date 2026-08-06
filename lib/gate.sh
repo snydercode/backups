@@ -103,24 +103,25 @@ gate_evaluate() {
                     [{code: "STATUS_ERROR", key: "-",
                       detail: ($h.errors[0].message // "remote status command failed")}]
                 elif $h.overall_status == "OK" then
-                    if (($h.last_run.age_hours // -1) < 0
-                        or ($h.last_run.age_hours // -1) > $max_age_hours) then
+                    ($h.last_run.age_hours // -1) as $age
+                    | if ($age | type) != "number" or $age < 0
+                         or $age > $max_age_hours then
                         # G8 STALE_RUN vs G15 STALE_IDLE: a stale host downgrades
-                        # to informational only when it PROVES idle — age known,
-                        # jobs listed, and every job reports numeric zero
-                        # pending_files and pending_bytes. Anything unprovable
-                        # (missing field, no jobs, unknown age) stays a failure.
-                        (($h.last_run.age_hours // -1) >= 0
-                         and ([$h.jobs[]?] | length > 0)
-                         and ([$h.jobs[]?]
-                              | all((.pending_files | type) == "number"
-                                    and .pending_files == 0
-                                    and ((.pending_bytes // 0) | type) == "number"
-                                    and (.pending_bytes // 0) == 0))) as $idle
+                        # to informational only when it PROVES idle. Anything
+                        # unprovable stays a failure: non-numeric or unknown age,
+                        # no jobs, a job whose check did not succeed (an ERROR
+                        # job reports default-zero pending counters that mean
+                        # "dry-run never ran", not "nothing pending"), or a
+                        # pending counter that is missing or non-numeric.
+                        [$h.jobs[]?] as $jobs
+                        | (($age | type) == "number" and $age >= 0
+                           and ($jobs | length > 0)
+                           and ($jobs | all(.status == "OK"
+                                            and ([.pending_files, .pending_bytes]
+                                                 | all(type == "number" and . == 0))))) as $idle
                         | [{code: (if $idle then "STALE_IDLE" else "STALE_RUN" end),
                             key: "-",
-                            detail: ("last successful run "
-                                     + (($h.last_run.age_hours // -1) | tostring)
+                            detail: ("last successful run " + ($age | tostring)
                                      + "h ago (limit " + ($max_age_hours | tostring) + "h)"
                                      + (if $idle
                                         then " — no files pending, scheduler likely dead but no data at risk"

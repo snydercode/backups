@@ -197,7 +197,7 @@ The deterministic health gate failed with these findings (status, host, code,
 key, detail):
 
 $fail_lines
-
+$([[ -n "$info_lines" ]] && printf '\nAlso present, informational only — context, do not triage:\n%s\n' "$info_lines")
 The raw fleet status JSON is at: $run_dir/fleet.json
 
 Diagnose each finding by following the 'Diagnostic triage' checklist in
