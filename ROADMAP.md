@@ -124,19 +124,19 @@ fleet capture; jq null-concatenation triggers ruled out — null is identity for
       (`UP_TO_DATE`, `STALE`) that the runtime no longer emits; `fleet_host`
       and the "match on fleet_host, never host" rule are undocumented.
       **Proposed fix:** update the Status Output Format + triage sections; fold
-      in the weekly-check surface (script, gate, ack file, tests, Makefile
+      in the health-check surface (script, gate, ack file, tests, Makefile
       targets). Entangled with uncommitted fleet-cutover edits — land with them.
-- [ ] **`cron.log` grows unbounded in STATE_DIR** — `bin/weekly-check.sh:125`
-      **Why it's an issue:** the `run-*/` prune glob never touches it; weekly
-      appends forever.
+- [ ] **`cron.log` grows unbounded in STATE_DIR** — `bin/check.sh:134`
+      **Why it's an issue:** the `run-*/` prune glob never touches it; daily
+      check + weekly report append forever (worse now that the check is daily).
       **Proposed fix:** truncate to the last ~500 lines during the prune step.
 - [ ] **`jobs_emit_host_jobs` failure swallowed in expected-jobs pipeline** — `lib/gate.sh:52-57`
       **Why it's an issue:** a malformed jobs.txt shrinks the expected-job set
       without tripping CONFIG_MISMATCH (which only counts hosts), silently
       weakening MISSING_JOB.
       **Proposed fix:** propagate the helper's rc into a CONFIG_MISMATCH finding.
-- [ ] **Polish batch (spartan/code-reviewer minors)** — `bin/weekly-check.sh`,
-      `test/gate-test.sh`
+- [ ] **Polish batch (spartan/code-reviewer minors)** — `bin/check.sh`
+      (formerly `bin/weekly-check.sh`), `test/gate-test.sh`
       **Why it's an issue:** readability/robustness drift, no behavior bugs:
       check-only's bare `exit` rides the preceding `[[ ]]` and collapses gate
       rc 2 into 1; synthesized RUNNER_FAILURE line doesn't strip tabs from

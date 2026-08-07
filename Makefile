@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: help status deploy schedule jobs check-jobs test weekly-check
+.PHONY: help status deploy schedule jobs check-jobs test check report
 
 help:
 	@echo "Targets:"
@@ -9,8 +9,9 @@ help:
 	@echo "  make schedule      # install schedules on all hosts"
 	@echo "  make jobs          # regenerate jobs.txt from the fleet config"
 	@echo "  make check-jobs    # fail if jobs.txt is stale vs the fleet config"
-	@echo "  make test          # run the weekly-check gate fixture tests"
-	@echo "  make weekly-check  # weekly health gate, verdict only (no side effects)"
+	@echo "  make test          # run the health-gate fixture tests"
+	@echo "  make check         # daily health gate, verdict only (no side effects)"
+	@echo "  make report        # weekly report, printed instead of emailed"
 
 status:
 	bash bin/status-all.sh
@@ -30,5 +31,8 @@ check-jobs:
 test:
 	bash test/gate-test.sh
 
-weekly-check:
-	bash bin/weekly-check.sh --check-only
+check:
+	bash bin/check.sh --check-only
+
+report:
+	bash bin/report.sh --dry-run

@@ -2,7 +2,7 @@
 # ssh-ro.sh — run an allowlisted read-only diagnostic on one fleet host.
 # Usage: ssh-ro.sh <host> <command...>
 #
-# This is the only remote access granted to the weekly-check FAIL-path triage
+# This is the only remote access granted to the backup-check FAIL-path triage
 # agent. That agent's prompt embeds remote-originated text (error strings, log
 # contents), so its remote reach is capped here, in code, not in prompt prose:
 # only known read-only commands, no shell metacharacters, only fleet hosts.

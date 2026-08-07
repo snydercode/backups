@@ -6,7 +6,7 @@
 #
 # The verdict is computed here, by code, on purpose: the weekly check's fail-safe
 # guarantee rests on never letting an LLM (or a human skim) decide "all's well".
-# Every rule maps to a numbered gate rule in the weekly-check design spec.
+# Every rule maps to a numbered gate rule in the health-check design spec.
 
 # Destinations under this are critical per CLAUDE.md ("< 50GB remaining").
 # Units: GNU df -P 1024-byte blocks (assumes no POSIXLY_CORRECT on remote hosts).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gate-test.sh — prove every named error condition trips the weekly-check gate.
+# gate-test.sh — prove every named error condition trips the health-check gate.
 #
 # Each case takes the healthy fixture (captured from the real fleet), breaks it
 # the way the real failure would, and asserts the gate emits the expected
