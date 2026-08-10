@@ -159,6 +159,10 @@ Hard limit: each line must be a single sentence under 120 characters. The
 reader has ADHD and will not read a paragraph. Lead with the most useful
 observation; drop the rest rather than running long.
 
+State only what the data below shows. Hosts reuse mount names (/phobos,
+/deimos) for different physical volumes, so never infer that two hosts share
+storage — compare the totals, which are listed per destination.
+
 No markdown, no bullets, no preamble.
 
 FINDINGS (deduped across the window):
@@ -175,7 +179,7 @@ $fleet"
         | head -n "$CONTEXT_MAX_LINES")"
     [[ -z "$out" || "$out" == "NONE" ]] && return 0
 
-    printf '\nCONTEXT (written by Claude, not part of the verdict)\n'
+    printf 'SUMMARY (written by Claude, not part of the verdict)\n'
     # fold -s breaks on spaces and leaves them dangling at end of line.
     printf '%s' "$out" | fold -s -w "$CONTEXT_WRAP" \
         | sed -e 's/[[:space:]]*$//' -e 's/^/  /'
@@ -337,8 +341,13 @@ checks_line="$ran_days of $days days ran, $total checks, $failed_runs failed."
 
 context=""
 if [[ "$want_context" -eq 1 && "$action_count" -gt 0 && -n "$latest_fleet" ]]; then
+    # Per-destination sizes matter: hosts share mount NAMES (/phobos, /deimos)
+    # while pointing at different volumes, and without the totals the model
+    # infers a shared pool that does not exist.
     fleet_lines="$(jq -r '.hosts[]
-        | "\(.fleet_host // .host // "?"): \(.overall_status // "?"), last run \(.last_run.age_hours // "?")h ago, \([.jobs[]?.pending_files] | add // 0) files pending"
+        | (.fleet_host // .host // "?") as $h
+        | "\($h): \(.overall_status // "?"), last run \(.last_run.age_hours // "?")h ago, \([.jobs[]?.pending_files] | add // 0) files pending",
+          (.jobs[]? | "    \($h) \(.dest): \(.dest_avail_human // "?") free of \(((.dest_total_kb // 0) / 1048576 | floor))GB total, \(.dest_used_pct // "?") used")
         ' "$latest_fleet" 2>/dev/null)"
     context="$(claude_context "$fail_tsv" "$fleet_lines")"
 fi
@@ -347,13 +356,15 @@ fi
 # all-clear headline is a single line, so add one to keep the same gap.
 [[ "$action_count" -eq 0 ]] && headline+=$'\n'
 
-body="$headline
+# Prose first, tables second. The summary is what gets read; the host table
+# and counts are there to check it against, not to be waded through.
+body=""
+[[ -n "$context" ]] && body+="$context"$'\n\n'
+
+body+="$headline
 $(printf '  %-8s %13s %9s' "HOST" "last backup" "waiting")
 $hosts_table
 "
-# Command substitution strips the trailing newline; restore it so the next
-# section is separated by a blank line like every other block.
-[[ -n "$context" ]] && body+="$context"$'\n'
 [[ -n "$known" ]] && body+="
 KNOWN, NOT ACTIONABLE
 $known"
