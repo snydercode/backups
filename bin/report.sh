@@ -11,9 +11,12 @@
 # collapsed to one line with an occurrence count. A report that takes effort to
 # read is a report that stops being read.
 #
-# usage: report.sh [--days N] [--dry-run]
-#   --days N     window size in calendar days, default 7
-#   --dry-run    print subject and body to stdout instead of emailing
+# usage: report.sh [--days N] [--dry-run] [--no-context]
+#   --days N       window size in calendar days, default 7
+#   --dry-run      print subject and body to stdout instead of emailing
+#   --no-context   skip the Claude-written CONTEXT section (it is skipped
+#                  automatically when there is nothing to act on)
+# env: CLAUDE_BIN   path to the claude CLI, default ~/.local/bin/claude
 
 set -u
 PATH=/usr/local/bin:/usr/bin:/bin
@@ -26,12 +29,25 @@ readonly STATE_DIR="$HOME/.local/state/backup-kit-check"
 # Actions shown before the fold, before "+N more". Five is the readable cap.
 readonly MAX_ACTIONS=5
 
+# Optional CONTEXT section. Runs only when there is at least one action, so
+# an all-clear week costs nothing and adds no failure mode. Every outcome
+# other than usable text (missing binary, timeout, non-zero exit, empty or
+# NONE reply) omits the section and leaves the rest of the report untouched:
+# the verdict, the action list and the counts are computed in bash above and
+# are never shown to the model as something it may revise. See lib/gate.sh —
+# the fail-safe guarantee rests on no LLM deciding "all's well".
+CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
+readonly CONTEXT_TIMEOUT=120
+readonly CONTEXT_MAX_LINES=3
+readonly CONTEXT_WRAP=72
+
 log() {
     printf '%s report: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
 
 days=7
 dry_run=0
+want_context=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --days)
@@ -42,8 +58,12 @@ while [[ $# -gt 0 ]]; do
             dry_run=1
             shift
             ;;
+        --no-context)
+            want_context=0
+            shift
+            ;;
         -h|--help)
-            sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -116,6 +136,49 @@ known_desc() {
             printf '%s — %s' "$host" "$detail"
             ;;
     esac
+}
+
+# Ask Claude what the failing findings mean taken together. Prints the section
+# on success and nothing at all otherwise — every failure path here is a
+# no-op, never an error, because a missing paragraph must not cost the reader
+# the report. Args: <failing findings tsv> <fleet summary lines>
+claude_context() {
+    local findings="$1" fleet="$2" out=""
+    [[ -x "$CLAUDE_BIN" ]] || return 0
+
+    local prompt="You are annotating an automated backup health report. Do NOT
+give a verdict, do NOT say whether things are fine, and do NOT repeat the
+findings verbatim. The report already states what is wrong and what to do.
+
+Add at most $CONTEXT_MAX_LINES lines of plain text explaining what these
+findings mean TAKEN TOGETHER: correlations between hosts, a likely shared root
+cause, or which item is most urgent and why. If you see no meaningful pattern,
+reply with exactly: NONE
+
+Hard limit: each line must be a single sentence under 120 characters. The
+reader has ADHD and will not read a paragraph. Lead with the most useful
+observation; drop the rest rather than running long.
+
+No markdown, no bullets, no preamble.
+
+FINDINGS (deduped across the window):
+$findings
+
+FLEET:
+$fleet"
+
+    # </dev/null: the CLI waits on stdin otherwise, and cron has none.
+    out="$(timeout "$CONTEXT_TIMEOUT" "$CLAUDE_BIN" -p "$prompt" \
+        </dev/null 2>/dev/null)" || return 0
+
+    out="$(printf '%s' "$out" | grep -v '^[[:space:]]*$' \
+        | head -n "$CONTEXT_MAX_LINES")"
+    [[ -z "$out" || "$out" == "NONE" ]] && return 0
+
+    printf '\nCONTEXT (written by Claude, not part of the verdict)\n'
+    # fold -s breaks on spaces and leaves them dangling at end of line.
+    printf '%s' "$out" | fold -s -w "$CONTEXT_WRAP" \
+        | sed -e 's/[[:space:]]*$//' -e 's/^/  /'
 }
 
 # Render an hour count as the coarsest unit that still reads at a glance.
@@ -193,12 +256,14 @@ actions=""
 action_count=0
 known=""
 failing_hosts=" "
+fail_tsv=""
 while IFS=$'\t' read -r st host code key cnt first last detail; do
     [[ -z "$st" ]] && continue
     case "$st" in
         FAIL)
             action_count=$((action_count + 1))
             failing_hosts+="$host "
+            fail_tsv+="$host	$code	$key	$detail"$'\n'
             if [[ "$action_count" -le "$MAX_ACTIONS" ]]; then
                 seen=""
                 if [[ "$cnt" -gt 1 && "$first" == "$last" ]]; then
@@ -270,6 +335,14 @@ fi
 checks_line="$ran_days of $days days ran, $total checks, $failed_runs failed."
 [[ "$missed" -gt 0 ]] && checks_line+=" No check on: $missed_days."
 
+context=""
+if [[ "$want_context" -eq 1 && "$action_count" -gt 0 && -n "$latest_fleet" ]]; then
+    fleet_lines="$(jq -r '.hosts[]
+        | "\(.fleet_host // .host // "?"): \(.overall_status // "?"), last run \(.last_run.age_hours // "?")h ago, \([.jobs[]?.pending_files] | add // 0) files pending"
+        ' "$latest_fleet" 2>/dev/null)"
+    context="$(claude_context "$fail_tsv" "$fleet_lines")"
+fi
+
 # The failure headline ends with the action list's trailing newline; the
 # all-clear headline is a single line, so add one to keep the same gap.
 [[ "$action_count" -eq 0 ]] && headline+=$'\n'
@@ -278,6 +351,9 @@ body="$headline
 $(printf '  %-8s %13s %9s' "HOST" "last backup" "waiting")
 $hosts_table
 "
+# Command substitution strips the trailing newline; restore it so the next
+# section is separated by a blank line like every other block.
+[[ -n "$context" ]] && body+="$context"$'\n'
 [[ -n "$known" ]] && body+="
 KNOWN, NOT ACTIONABLE
 $known"
