@@ -14,9 +14,6 @@ source "$REPO_DIR/lib/remote.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
-# Windows hosts run the native runtime from the Windows filesystem, not from
-# inside the distro: the whole point is that the task never touches WSL.
-WIN_KIT_DIR="C:\\backup-kit"
 SCHEDULE_TIME="01:00"
 
 HOSTS=()

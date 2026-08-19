@@ -8,9 +8,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_SCRIPT="$REPO_DIR/backup.sh"
+BACKUP_PS1="$REPO_DIR/backup.ps1"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
 source "$REPO_DIR/lib/jobs.sh"
 source "$REPO_DIR/lib/hosts.sh"
+source "$REPO_DIR/lib/remote.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
@@ -27,6 +29,35 @@ usage() {
     exit 2
 }
 
+# Copy the WSL runtime's last-run.txt to the Windows side, once.
+#
+# Without it the first native status reports NEVER_RUN for a host that has been
+# backing up for months, and lib/gate.sh turns that into a failing finding on a
+# healthy machine. Never overwrites: after cutover the native runtime owns this
+# file, and reseeding it from a stale WSL copy would rewind the run history.
+deploy_seed_native_state() {
+    local host="$1"
+    local tmp_dir
+    tmp_dir="$(dirname "$2")"
+
+    if ssh "$host" "if exist $WIN_STATE_DIR\\last-run.txt (exit 0) else (exit 1)"; then
+        echo "  native last-run.txt already present, leaving it alone"
+        return 0
+    fi
+
+    local seed_file="$tmp_dir/last-run.seed"
+    if ssh "$host" "wsl.exe -e bash -lc \"cat $REMOTE_STATE_DIR/last-run.txt\"" \
+        > "$seed_file" 2>/dev/null && [[ -s "$seed_file" ]]; then
+        scp -q "$seed_file" "$host:C:/ProgramData/backup-kit/last-run.txt"
+        rm -f "$seed_file"
+        echo "  seeded last-run.txt from the WSL runtime"
+    else
+        rm -f "$seed_file"
+        echo "  WARNING: no WSL last-run.txt to seed — the first status on $host" >&2
+        echo "           will report NEVER_RUN and the health check will fail it" >&2
+    fi
+}
+
 main() {
     local host="${1:-}"
 
@@ -41,6 +72,10 @@ main() {
     }
     [ -f "$BACKUP_SCRIPT" ] || {
         echo "ERROR: missing backup script: $BACKUP_SCRIPT" >&2
+        exit 1
+    }
+    [ -f "$BACKUP_PS1" ] || {
+        echo "ERROR: missing Windows runtime: $BACKUP_PS1" >&2
         exit 1
     }
 
@@ -110,7 +145,7 @@ main() {
     echo "=== Deploying to $host ==="
 
     if [[ "$is_wsl" == "1" ]]; then
-        echo "  [WSL host]"
+        echo "  [Windows host]"
 
         # Ensure C:\Temp exists for file staging
         ssh "$host" "if not exist C:\\Temp mkdir C:\\Temp" 2>/dev/null || true
@@ -127,6 +162,17 @@ main() {
              && cp /mnt/c/Temp/jobs.txt $REMOTE_KIT_DIR/jobs.txt\""
 
         ssh "$host" "wsl.exe -e bash -lc \"chmod +x $REMOTE_KIT_DIR/*.sh\""
+
+        # The native runtime, on the Windows filesystem. The WSL copy above
+        # stays put: it costs nothing, and it is the rollback path if the
+        # native runtime has to be pulled from one host in a hurry.
+        echo "  copying backup.ps1 -> $WIN_KIT_DIR"
+        ssh "$host" "if not exist $WIN_KIT_DIR mkdir $WIN_KIT_DIR"
+        scp -q "$BACKUP_PS1" "$host:C:/backup-kit/backup.ps1"
+        scp -q "$tmp_jobs_file" "$host:C:/backup-kit/jobs.txt"
+
+        ssh "$host" "if not exist $WIN_STATE_DIR mkdir $WIN_STATE_DIR"
+        deploy_seed_native_state "$host" "$tmp_jobs_file"
     else
         echo "  [Linux host]"
 

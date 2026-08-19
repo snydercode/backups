@@ -152,14 +152,30 @@ main() {
     }
 
     local is_wsl="${IS_WSL[$host_index]}"
-    local cmd="$REMOTE_KIT_DIR/backup.sh status --raw"
-
-    if [[ -n "$before_date" ]]; then
-        cmd="$cmd --before '$before_date'"
-    fi
-
     local output
-    output="$(remote_exec "$host" "$is_wsl" "$cmd" -o BatchMode=yes -o ConnectTimeout=10)"
+
+    # A Windows host answers from whichever runtime is deployed on it. The
+    # probe costs one extra ssh round trip per host per check and keeps a
+    # half-migrated fleet reporting correctly in both directions.
+    if [[ "$is_wsl" == "1" ]] \
+        && remote_has_native_windows "$host" -o BatchMode=yes -o ConnectTimeout=10; then
+        local win_cmd="powershell.exe -NoProfile -ExecutionPolicy Bypass"
+        win_cmd="$win_cmd -File $WIN_KIT_DIR\\backup.ps1 status"
+        # Unquoted on purpose: cmd.exe would pass the quotes through to
+        # PowerShell as part of the value. backup.ps1 validates the format.
+        if [[ -n "$before_date" ]]; then
+            win_cmd="$win_cmd -Before $before_date"
+        fi
+        output="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$win_cmd")"
+    else
+        local cmd="$REMOTE_KIT_DIR/backup.sh status --raw"
+
+        if [[ -n "$before_date" ]]; then
+            cmd="$cmd --before '$before_date'"
+        fi
+
+        output="$(remote_exec "$host" "$is_wsl" "$cmd" -o BatchMode=yes -o ConnectTimeout=10)"
+    fi
 
     if [[ "$raw" == "1" ]]; then
         printf '%s\n' "$output"
