@@ -28,6 +28,22 @@ allowed_command() {
         df|df\ *|du\ *|findmnt*|mountpoint\ *|free*|uptime*|quser*|hostname*|date*) return 0 ;;
         crontab\ -l*) return 0 ;;
         schtasks.exe\ /[Qq]uery*) return 0 ;;
+        # cmd.exe is the shell on the Windows side of the SSH connection, so a
+        # cut-over host's state under C:\ProgramData\backup-kit is unreachable by
+        # cat/tail/ls. These are the cmd equivalents.
+        type\ *|dir|dir\ *) return 0 ;;
+        # Windows reads that cmd has no verb for. The payload is vetted the same
+        # way the WSL wrap below is, and the metacharacter guard already rejects
+        # the ; that PowerShell would need to chain a second statement.
+        powershell.exe\ -NoProfile\ -Command\ *)
+            local ps="${cmd#powershell.exe -NoProfile -Command }"
+            ps="${ps#[\"\']}"
+            ps="${ps%[\"\']}"
+            case "$ps" in
+                Get-Content\ *|Get-ScheduledTaskInfo*) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
         wsl.exe\ -e\ bash\ -lc\ *)
             local inner="${cmd#wsl.exe -e bash -lc }"
             inner="${inner#[\"\']}"

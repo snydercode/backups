@@ -8,9 +8,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_SCRIPT="$REPO_DIR/backup.sh"
+BACKUP_PS1="$REPO_DIR/backup.ps1"
 CONFIG_FILE="$REPO_DIR/jobs.txt"
 source "$REPO_DIR/lib/jobs.sh"
 source "$REPO_DIR/lib/hosts.sh"
+source "$REPO_DIR/lib/remote.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
@@ -41,6 +43,10 @@ main() {
     }
     [ -f "$BACKUP_SCRIPT" ] || {
         echo "ERROR: missing backup script: $BACKUP_SCRIPT" >&2
+        exit 1
+    }
+    [ -f "$BACKUP_PS1" ] || {
+        echo "ERROR: missing Windows runtime: $BACKUP_PS1" >&2
         exit 1
     }
 
@@ -110,7 +116,7 @@ main() {
     echo "=== Deploying to $host ==="
 
     if [[ "$is_wsl" == "1" ]]; then
-        echo "  [WSL host]"
+        echo "  [Windows host]"
 
         # Ensure C:\Temp exists for file staging
         ssh "$host" "if not exist C:\\Temp mkdir C:\\Temp" 2>/dev/null || true
@@ -127,6 +133,17 @@ main() {
              && cp /mnt/c/Temp/jobs.txt $REMOTE_KIT_DIR/jobs.txt\""
 
         ssh "$host" "wsl.exe -e bash -lc \"chmod +x $REMOTE_KIT_DIR/*.sh\""
+
+        # The native runtime, on the Windows filesystem. The WSL copy above stays
+        # put: it costs nothing, and rolling a host back needs it. Installing this
+        # file changes nothing on its own — bin/schedule.sh is what cuts a host
+        # over, and bin/status.sh follows the scheduled task, not the file.
+        echo "  copying backup.ps1 -> $WIN_KIT_DIR"
+        ssh "$host" "if not exist $WIN_KIT_DIR mkdir $WIN_KIT_DIR"
+        scp -q "$BACKUP_PS1" "$host:C:/backup-kit/backup.ps1"
+        scp -q "$tmp_jobs_file" "$host:C:/backup-kit/jobs.txt"
+
+        ssh "$host" "if not exist $WIN_STATE_DIR mkdir $WIN_STATE_DIR"
     else
         echo "  [Linux host]"
 
