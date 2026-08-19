@@ -2,8 +2,7 @@
 <#
 backup.ps1 — Windows-native backup-kit runtime.
 
-SPIKE: implements `status` only. `plan` and `run` are stubs so the JSON
-contract can be reviewed before the copy path is written.
+Implements the same three commands as backup.sh: plan, run, status.
 
 Why this exists: on ephys3/ephys7 the backup work is D: -> E:/F:, all local
 NTFS volumes. Routing it through WSL forces the scheduled task to run as the
@@ -22,7 +21,7 @@ Two consequences worth knowing before editing:
   * Every numeric field must be a JSON number. lib/gate.sh G14 MALFORMED_FIELD
     fails a host whose counters arrive as strings.
 
-Usage: backup.ps1 status [-Raw] [-Before YYYY-MM-DD] [-JobsFile <path>]
+Usage: backup.ps1 <plan|run|status> [-Raw] [-Before YYYY-MM-DD] [-JobsFile <path>]
 #>
 
 [CmdletBinding()]
@@ -46,6 +45,12 @@ $ResultFile = Join-Path $StateDir 'last-run.txt'
 if (-not $JobsFile) { $JobsFile = Join-Path $PSScriptRoot 'jobs.txt' }
 
 $EpochStart = [datetime]::SpecifyKind([datetime]'1970-01-01', [DateTimeKind]::Utc)
+
+# Invoke-Run reports its result here rather than returning it. A `return` would
+# be indistinguishable from the progress lines the function writes: calling it
+# as `exit (Invoke-Run)` captures the whole output stream as the exit
+# expression, and every line of the run log vanishes into it.
+$script:RunExitCode = 0
 
 # /mnt/d/data -> D:\data. Anything else passes through unchanged.
 function ConvertTo-WindowsPath {
@@ -99,10 +104,23 @@ function Get-LastFileEpoch {
     return (ConvertTo-Epoch $newest)
 }
 
-# robocopy in list-only mode is the analog of `rsync --dry-run`.
+# File selection, shared by plan, run, and status so all three agree on what
+# "pending" means.
 #   /E              recurse, including empty dirs        (rsync -a)
-#   /XC /XN /XO     skip changed, newer, older files, so only files absent
-#                   from the destination count           (rsync --ignore-existing)
+#   /XN /XO         skip files newer or older at the destination, so a file
+#                   already backed up is never rewritten (rsync --ignore-existing)
+#
+# /XC is deliberately absent, and this is the one place the two runtimes differ
+# on purpose. robocopy has no equivalent of rsync's --partial-dir: it writes
+# straight to the final path, so an interrupted run leaves a truncated file
+# under the real name. robocopy classes that file as "changed" (same timestamp,
+# different size), which is exactly what /XC would exclude — so excluding it
+# would freeze the truncation forever. Without /XC the next run repairs it.
+# A source file genuinely edited after backup gets a new timestamp and is
+# excluded by /XN, so append-only still holds for the case it protects.
+$RoboSelect = @('/E', '/XN', '/XO')
+
+# robocopy in list-only mode is the analog of `rsync --dry-run`.
 #   /L              list only, copy nothing              (rsync --dry-run)
 #   /BYTES          report the summary in plain integers, not "1.2 g"
 #   /NFL /NDL /NP   suppress file, dir, and progress lines; keep the summary
@@ -114,7 +132,7 @@ function Get-LastFileEpoch {
 function Get-PendingWork {
     param([string]$Src, [string]$Dest, [string]$MinAgeDate)
 
-    $roboArgs = @($Src, $Dest, '/E', '/XC', '/XN', '/XO', '/L',
+    $roboArgs = @($Src, $Dest) + $RoboSelect + @('/L',
                   '/BYTES', '/NFL', '/NDL', '/NP', '/R:0', '/W:0')
     if ($MinAgeDate) { $roboArgs += "/MINAGE:$MinAgeDate" }
 
@@ -140,6 +158,40 @@ function Get-PendingWork {
         PendingFiles = $files
         PendingBytes = $bytes
     }
+}
+
+# jobs.txt is host-scoped and deployed alongside this script: one "src:dest"
+# per line, blanks and # comments ignored. Paths are WSL-form because the
+# fleet renderer emits them that way; see ConvertTo-WindowsPath.
+function Read-JobLines {
+    if (-not (Test-Path -LiteralPath $JobsFile)) {
+        throw "jobs file not found: $JobsFile"
+    }
+
+    $lines = @()
+    foreach ($line in Get-Content -LiteralPath $JobsFile) {
+        if ($line -match '^\s*$' -or $line -match '^\s*#') { continue }
+
+        $parts = $line.Trim() -split ':', 2
+        if ($parts.Count -ne 2 -or -not $parts[0] -or -not $parts[1]) { continue }
+
+        $lines += [pscustomobject]@{
+            Src     = $parts[0]
+            Dest    = $parts[1]
+            SrcWin  = (ConvertTo-WindowsPath $parts[0])
+            DestWin = (ConvertTo-WindowsPath $parts[1])
+        }
+    }
+    return $lines
+}
+
+# True when the volume holding $PathWin is present. robocopy against a missing
+# volume takes its own sweet time to fail, and the message it gives is worse.
+function Test-DestVolume {
+    param([string]$PathWin)
+    $root = [System.IO.Path]::GetPathRoot($PathWin)
+    if (-not $root) { return $false }
+    return (Test-Path -LiteralPath $root)
 }
 
 function Get-DestDisk {
@@ -190,10 +242,6 @@ function Read-LastRun {
 }
 
 function Get-StatusJson {
-    if (-not (Test-Path -LiteralPath $JobsFile)) {
-        throw "jobs file not found: $JobsFile"
-    }
-
     $minAgeDate = ''
     if ($Before) {
         if ($Before -notmatch '^\d{4}-\d{2}-\d{2}$') { throw '--Before must be YYYY-MM-DD' }
@@ -219,16 +267,11 @@ function Get-StatusJson {
     }
 
     $jobs = @()
-    foreach ($line in Get-Content -LiteralPath $JobsFile) {
-        if ($line -match '^\s*$' -or $line -match '^\s*#') { continue }
-
-        $parts = $line.Trim() -split ':', 2
-        if ($parts.Count -ne 2 -or -not $parts[0] -or -not $parts[1]) { continue }
-        $src = $parts[0]
-        $dest = $parts[1]
-
-        $srcWin  = ConvertTo-WindowsPath $src
-        $destWin = ConvertTo-WindowsPath $dest
+    foreach ($jobLine in (Read-JobLines)) {
+        $src     = $jobLine.Src
+        $dest    = $jobLine.Dest
+        $srcWin  = $jobLine.SrcWin
+        $destWin = $jobLine.DestWin
 
         $job = [ordered]@{
             src                 = $src
@@ -253,7 +296,7 @@ function Get-StatusJson {
         $jobError = $null
 
         # Mount check first: robocopy against a missing volume is slow to fail.
-        if (-not (Test-Path -LiteralPath ([System.IO.Path]::GetPathRoot($destWin)))) {
+        if (-not (Test-DestVolume $destWin)) {
             $jobStatus = 'ERROR'
             $jobError = "destination volume not available: $destWin"
         } else {
@@ -312,7 +355,158 @@ function Get-StatusJson {
     return ($status | ConvertTo-Json -Depth 6 -Compress)
 }
 
+function Write-Tee {
+    param([string]$Message, [string]$LogFile)
+
+    Write-Output $Message
+    if ($LogFile) { Add-Content -LiteralPath $LogFile -Value $Message }
+}
+
+function Invoke-Plan {
+    foreach ($jobLine in (Read-JobLines)) {
+        Write-Output "=== $($jobLine.Src) -> $($jobLine.Dest) ==="
+
+        if (-not (Test-DestVolume $jobLine.DestWin)) {
+            Write-Output "ERROR: destination volume not available: $($jobLine.DestWin)"
+            Write-Output ''
+            continue
+        }
+
+        $pending = Get-PendingWork -Src $jobLine.SrcWin -Dest $jobLine.DestWin -MinAgeDate ''
+        if (-not $pending.Ok) {
+            Write-Output "ERROR: $($pending.Error)"
+        } else {
+            Write-Output "pending_files=$($pending.PendingFiles)"
+            Write-Output "pending_bytes=$($pending.PendingBytes)"
+            Write-Output "pending_human=$(Format-Iec $pending.PendingBytes)"
+        }
+        Write-Output ''
+    }
+}
+
+# The analog of backup.sh's make_readonly(). Two deliberate differences:
+#   * attrib +R is enforced by Windows on NTFS. chmod 444 from inside WSL is
+#     not: it resets on remount unless the volume carries the `metadata` mount
+#     option, which CLAUDE.md documents as a known hole on these two hosts.
+#   * a destination file whose size disagrees with its source is left WRITABLE.
+#     Such a file is a truncated copy from an interrupted run, and marking it
+#     read-only freezes the truncation for good — nothing would ever repair it.
+#     Left writable, the next run overwrites it. backup.sh needs no equivalent:
+#     rsync's --partial-dir keeps partials out of the final path in the first
+#     place, which robocopy has no way to do.
+# Directories stay writable so later runs can still create files in them.
+function Set-DestReadOnly {
+    param([string]$SrcWin, [string]$DestWin, [string]$LogFile)
+
+    $start = Get-Date
+    $marked = 0
+    $left = 0
+    $destRoot = $DestWin.TrimEnd('\')
+
+    Get-ChildItem -LiteralPath $DestWin -Recurse -File -Force -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            # Already read-only: the fast path for repeat runs, same reason
+            # backup.sh filters on ! -perm 444.
+            if ($_.IsReadOnly) { return }
+
+            $rel = $_.FullName.Substring($destRoot.Length).TrimStart('\')
+            $srcInfo = Get-Item -LiteralPath (Join-Path $SrcWin $rel) -Force -ErrorAction SilentlyContinue
+
+            if ($null -ne $srcInfo -and $srcInfo.Length -ne $_.Length) {
+                $left++
+                Add-Content -LiteralPath $LogFile `
+                    -Value "left writable, size differs from source: $($_.FullName)"
+                return
+            }
+
+            $_.IsReadOnly = $true
+            $marked++
+        }
+
+    $secs = [int]((Get-Date) - $start).TotalSeconds
+    Write-Tee "read-only pass: $marked marked, $left left writable, ${secs}s" $LogFile
+}
+
+# Shared with backup.sh verbatim, so either runtime can read the other's state.
+# One deliberate difference: backup.sh writes this file inside each job, so on a
+# two-destination host it records only the LAST job's result and a failure in
+# the first destination is invisible to lib/gate.sh. This writes once, and the
+# worst result wins.
+function Write-LastRun {
+    param([int]$Result)
+
+    $now = Get-Date
+    $quoted = '"' + $now.ToString('yyyy-MM-dd HH:mm:ss') + '"'
+    $lines = @(
+        "last_run_epoch=$(ConvertTo-Epoch $now)",
+        "last_run_date=$quoted",
+        "last_run_result=$Result"
+    )
+    Set-Content -LiteralPath $ResultFile -Value $lines -Encoding ASCII
+}
+
+# Copy flags, on top of $RoboSelect:
+#   /Z              restartable mode, so a dropped link mid-file resumes
+#                   instead of restarting                (rsync --partial)
+#   /COPY:DAT       data, attributes, timestamps         (rsync -a)
+#   /DCOPY:T        carry directory timestamps too
+#   /R:1 /W:5       one retry, 5s apart. robocopy's default is a million
+#                   retries 30s apart, which would hang the 1 AM job for weeks.
+#   /LOG+ /TEE      append to last-run.log and echo to stdout for cron.log
+# No /MIR and no /PURGE: nothing may ever be deleted from a destination.
+function Invoke-Run {
+    New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+    $logFile = Join-Path $StateDir 'last-run.log'
+    Set-Content -LiteralPath $logFile `
+        -Value "backup-kit run $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))"
+
+    $worst = 0
+    foreach ($jobLine in (Read-JobLines)) {
+        Write-Tee "=== Backup: $($jobLine.Src) -> $($jobLine.Dest) ===" $logFile
+        $started = Get-Date
+        Write-Tee "Started: $($started.ToString('yyyy-MM-dd HH:mm:ss'))" $logFile
+
+        if (-not (Test-DestVolume $jobLine.DestWin)) {
+            Write-Tee "FAILED: destination volume not available: $($jobLine.DestWin)" $logFile
+            if ($worst -lt 1) { $worst = 1 }
+            continue
+        }
+
+        $roboArgs = @($jobLine.SrcWin, $jobLine.DestWin) + $RoboSelect +
+                    @('/Z', '/COPY:DAT', '/DCOPY:T', '/R:1', '/W:5',
+                      '/BYTES', '/NP', "/LOG+:$logFile", '/TEE')
+        & robocopy.exe @roboArgs
+        $rc = $LASTEXITCODE
+
+        # 0-7 is success (bits: 1 copied, 2 extras present, 4 mismatched).
+        # 8 and above is a real failure. Passing robocopy's code through
+        # unmapped would report every successful copy as a failed run to
+        # lib/gate.sh, which reads last_run_result.
+        if ($rc -ge 8) {
+            Write-Tee "FAILED: robocopy exited $rc" $logFile
+            if ($worst -lt $rc) { $worst = $rc }
+        } else {
+            Set-DestReadOnly -SrcWin $jobLine.SrcWin -DestWin $jobLine.DestWin -LogFile $logFile
+        }
+
+        $secs = [int]((Get-Date) - $started).TotalSeconds
+        Write-Tee "Finished: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) (${secs}s, robocopy exit $rc)" $logFile
+        Write-Tee '' $logFile
+    }
+
+    Write-LastRun $worst
+    $script:RunExitCode = $worst
+}
+
 switch ($Command) {
     'status' { Get-StatusJson }
-    default  { throw "$Command is not implemented in this spike; status only" }
+    'plan'   {
+        if ($Before) { throw '-Before is only valid with status' }
+        Invoke-Plan
+    }
+    'run'    {
+        if ($Before) { throw '-Before is only valid with status' }
+        Invoke-Run
+        exit $script:RunExitCode
+    }
 }

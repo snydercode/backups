@@ -144,21 +144,40 @@ fleet capture; jq null-concatenation triggers ruled out — null is identity for
       3-process-per-host jq pipeline; help text inlined instead of the house
       `usage()` idiom; `send_email`'s unused return scaffolding.
       **Proposed fix:** apply as one cleanup pass alongside the ack-schema change.
-- [ ] **backup.ps1 is a status-only spike; plan and run are unimplemented** — `backup.ps1`
-      **Why it's an issue:** the status contract is proven — on ephys3 and
-      ephys7 (2026-08-19) the PowerShell output produced findings identical to
-      the WSL runtime's when fed to `gate_evaluate`. On ephys3, whose two
-      destinations exercise the multi-job path, the whole `jobs` array is
-      byte-identical to the WSL runtime's, with `dest_total_kb`,
-      `dest_used_kb`, `dest_avail_kb`, `dest_avail_human` and `dest_used_pct`
-      matching `df -P` exactly. Nothing else is written. `plan` and `run`
-      throw, so no host can switch yet.
-      **Proposed fix:** implement `run` with `robocopy /E /XC /XN /XO /Z` plus
-      `attrib +R` in place of `make_readonly()`, translating robocopy's 0-7
-      success codes to 0. Then, at cutover, seed
+- [ ] **backup.ps1 is not wired into deploy or scheduling** — `backup.ps1`, `bin/deploy.sh`, `bin/schedule.sh`
+      **Why it's an issue:** plan, run and status all work. Verified 2026-08-19:
+      status output on ephys3 is byte-identical to the WSL runtime's whole
+      `jobs` array and drives `gate_evaluate` to identical findings; run copies,
+      sets read-only, and writes `last-run.txt` in backup.sh's format; a
+      truncated destination file is repaired on the next run. All of it against
+      temp fixtures. No host deploys it, nothing schedules it, and it has never
+      run against real data.
+      **Proposed fix:** add a Windows route to `bin/deploy.sh` (copy to
+      `C:\backup-kit\`, no WSL), have `bin/schedule.sh` create the task with
+      `/RU SYSTEM` and no `/IT`, and at cutover seed
       `C:\ProgramData\backup-kit\last-run.txt` from the host's WSL
       `~/.local/state/backup-kit/last-run.txt` — without it the first status
-      reports NEVER_RUN and the gate raises a failing finding on a healthy host.
+      reports NEVER_RUN and the gate fails a healthy host. Run `plan` before the
+      first `run`: it must report 0 pending, which proves no existing
+      destination file is about to be rewritten.
+- [ ] **backup.sh records only the last job's result in last-run.txt** — `backup.sh:180`
+      **Why it's an issue:** `run_backup_one` writes the result file at the end
+      of every job, so on a two-destination host the second job's exit code
+      overwrites the first's. A failed `/phobos` followed by a clean `/deimos`
+      leaves `last_run_result=0`, and lib/gate.sh reads exactly that field, so
+      the host reports OK. `run_for_all_jobs` does return the aggregate, but
+      only cron.log ever sees it. backup.ps1 writes once with the worst result.
+      **Proposed fix:** move the `last-run.txt` write out of `run_backup_one`
+      into `run_for_all_jobs`, recording the worst exit code across jobs.
+- [ ] **A timestamp-skewed truncation is invisible to plan and status** — `backup.ps1`
+      **Why it's an issue:** a destination file that is short AND carries a
+      timestamp newer than its source is excluded by `/XO`, so robocopy never
+      repairs it and `pending_files` stays 0. `Set-DestReadOnly` does detect it,
+      leaves it writable, and logs "left writable, size differs from source",
+      but nothing surfaces that in the status JSON, so the gate cannot see it.
+      Verified as a real behaviour on ephys7, 2026-08-19.
+      **Proposed fix:** count the left-writable files during the read-only pass
+      and emit the total as a job field, then add a gate rule for non-zero.
 - [ ] **jobs.txt has no separator that survives Windows paths** — `backup.ps1`, `lib/jobs.sh`
       **Why it's an issue:** job lines are `src:dest`, and `C:\data` contains
       the separator. Harmless today because the fleet renderer emits WSL-form
