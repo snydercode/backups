@@ -144,3 +144,24 @@ fleet capture; jq null-concatenation triggers ruled out — null is identity for
       3-process-per-host jq pipeline; help text inlined instead of the house
       `usage()` idiom; `send_email`'s unused return scaffolding.
       **Proposed fix:** apply as one cleanup pass alongside the ack-schema change.
+- [ ] **backup.ps1 is a status-only spike; plan and run are unimplemented** — `backup.ps1`
+      **Why it's an issue:** the status contract is proven — on ephys7
+      (2026-08-19) the PowerShell output produced findings identical to the WSL
+      runtime's when fed to `gate_evaluate`, with `dest_total_kb`,
+      `dest_used_kb`, `dest_avail_kb`, `dest_avail_human` and `dest_used_pct`
+      matching `df -P` exactly. Nothing else is written. `plan` and `run`
+      throw, so no host can switch yet.
+      **Proposed fix:** implement `run` with `robocopy /E /XC /XN /XO /Z` plus
+      `attrib +R` in place of `make_readonly()`, translating robocopy's 0-7
+      success codes to 0. Then, at cutover, seed
+      `C:\ProgramData\backup-kit\last-run.txt` from the host's WSL
+      `~/.local/state/backup-kit/last-run.txt` — without it the first status
+      reports NEVER_RUN and the gate raises a failing finding on a healthy host.
+- [ ] **jobs.txt has no separator that survives Windows paths** — `backup.ps1`, `lib/jobs.sh`
+      **Why it's an issue:** job lines are `src:dest`, and `C:\data` contains
+      the separator. Harmless today because the fleet renderer emits WSL-form
+      paths (`/mnt/d/data`) and backup.ps1 translates them, but a hand-written
+      Windows path splits into `C` and `\data` and surfaces as a JOB_ERROR
+      with a confusing message rather than a config error.
+      **Proposed fix:** reject a job line whose first field is a single letter,
+      with an explicit "use WSL-form paths in jobs.txt" error.
