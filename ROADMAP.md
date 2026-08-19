@@ -589,3 +589,125 @@ Six raw findings did not survive and were not filed:
    filed above as the header-claim finding instead.
 6. "The merge commit's reference to a report email tomorrow is wrong because the report cron
    is Mondays." A one-off `at` job was queued for 08:35 tomorrow; the reviewer could not see it.
+
+## Review findings — round 2, the fix commit (2026-08-19)
+
+**Context:** re-review of `3157ca8`, which fixed the nine blocking items above.
+Reviewers: `@skeptic`, `@code-reviewer`. Both independently flagged the same three
+items, so the overlap below is convergence, not duplication. **Eight of ten are
+self-inflicted — created by round 1's fixes — and two pre-date the branch.**
+
+Confirmed correct by both reviewers, and not re-opened: the `/MINAGE` cutoff matches
+`backup.sh`'s semantics (including `plan` applying none); `continue` inside the new
+`try` targets the loop and never crosses the `finally`; `$worst` is visible in the
+`finally`; `Get-PendingWork`'s `$ErrorActionPreference` is correctly function-scoped
+and reverts on return; `Test-DestVolume` is right for every path form
+`ConvertTo-WindowsPath` emits; and the widened allowlist admits no write or execute.
+
+### Before merge
+
+- [ ] **A robocopy that fails to launch now reports OK with nothing pending** — `backup.ps1:139-147`
+      **Why it's an issue:** self-inflicted by the `ErrorActionPreference = 'Continue'`
+      fix. `$LASTEXITCODE` is never reset before `& robocopy.exe`, so if the binary
+      cannot start — AppLocker or WDAC on a domain-managed box, AV block, a PATH
+      without System32 — `$rc` holds the *previous* job's exit code and the summary
+      regexes simply miss. The function returns `Ok = $true, PendingFiles = 0`, the
+      job renders `status: OK`, and `src_last_file_epoch` is computed independently
+      so the gate's idle proof passes too. Verified on ephys7, 2026-08-19:
+      `rc=[0] rc_ge_8=False summary_seen=False`. Under the old `Stop` this threw —
+      loud and wrong; now it is silent and green, which is worse.
+      **Proposed fix:** `$global:LASTEXITCODE = $null` immediately before the call,
+      and return `Ok = $false` when `$rc` is null or the output carries no
+      `Files :` summary line.
+
+- [ ] **The runtime probe has no "unknown" answer** — `lib/remote.sh:38-44`, `bin/status.sh:160-161`
+      **Why it's an issue:** self-inflicted by the probe fix. The function's return
+      value is grep's exit status and ssh's stderr is discarded, so "this host runs
+      WSL", "Task Scheduler RPC failed", "the task was renamed", and "the host key
+      changed" are one answer. On a cut-over host that means reading
+      `~/.local/state/backup-kit/last-run.txt`, which nothing has written since
+      cutover: age passes 30h and the gate emits an un-ackable STALE_RUN on a host
+      that is backing up correctly. That is the failure the probe fix existed to
+      remove, with its trigger moved from "deploy ran" to "one schtasks query
+      hiccuped". The literal `BackupKit` is also now duplicated across
+      `lib/remote.sh`, `bin/schedule.sh` (twice) and five places in CLAUDE.md.
+      **Proposed fix:** capture output and rc separately and return three states —
+      native, wsl, probe-failed — with `bin/status.sh` raising an error on the third
+      rather than querying the runtime that is not running. Hoist the task name into
+      a `WIN_TASK_NAME` constant.
+
+- [ ] **The state seed is written at deploy time but first read at schedule time** — `bin/deploy.sh:33-58`
+      **Why it's an issue:** self-inflicted, and a direct consequence of moving the
+      flip. `deploy_seed_native_state` copies the WSL `last-run.txt` once, at deploy,
+      and refuses to overwrite. Before the probe fix, status flipped at that same
+      moment, so the seed was fresh when it started being read; now the flip happens
+      in `bin/schedule.sh`. ephys3's native seed was already written on 2026-08-19
+      and is frozen, so running the documented cutover
+      (`bash bin/deploy.sh ephys3 && bash bin/schedule.sh ephys3`) makes it report an
+      un-ackable STALE_RUN until the first 01:00 native run. The documented rollback
+      has the mirror-image hole: reinstalling the WSL task flips the probe to a state
+      file frozen since cutover.
+      **Proposed fix:** seed from `bin/schedule.sh`'s Windows branch, where the flip
+      now happens, and allow the overwrite when the source file is newer.
+
+- [ ] **The triage doc and the triage channel disagree about what can be run** — `CLAUDE.md:249`, `:277`, `bin/check.sh:217-220`
+      **Why it's an issue:** self-inflicted by fixes 8 and 9 landing without being
+      reconciled. CLAUDE.md's rewritten step 5 documents
+      `Get-ScheduledTaskInfo -TaskName BackupKit | Select NumberOfMissedRuns`, whose
+      pipe is rejected by `ssh-ro.sh`'s metacharacter guard before the allowlist is
+      consulted, and which lacks the `powershell.exe -NoProfile -Command ` prefix the
+      allowlist requires verbatim. The runtime-identification command at the head of
+      the section has the same problem. Meanwhile `bin/check.sh`'s prompt still
+      enumerates the old command list, so the agent's likeliest move on a native host
+      is `cat C:\ProgramData\...`, which passes the guard and then fails in cmd.exe.
+      **Proposed fix:** rewrite both commands into forms the wrapper accepts and
+      update `bin/check.sh`'s enumeration; drop the allowlisted cmdlets that no
+      documented step uses.
+
+- [ ] **The documented rollback names an account that does not exist on the only host worth rolling back** — `CLAUDE.md:398`, `bin/deploy.sh:167`
+      **Why it's an issue:** self-inflicted. The pre-rewrite doc carried per-host
+      `schtasks /Create` variants — `/RU admin` for ephys3, `/RU Toor` for ephys7. The
+      rewrite kept one and hardcoded `/RU admin`, and § Rollback points at it.
+      `jobs.txt` gives ephys7 `windows_user=Toor`, and ephys7 is the cut-over host, so
+      the documented rollback is wrong for the only machine that can use it — during
+      an incident, in a document the triage agent is told to follow. Separately,
+      `bin/deploy.sh:167` still calls the WSL copy "the rollback path", which is the
+      sentence removed from `lib/remote.sh` for being false.
+      **Proposed fix:** restore both per-host variants; delete the stale sentence.
+
+### Deferred
+
+- [ ] **`-Before` validation is shape-only, and the cutoff is culture-dependent** — `backup.ps1:271-277`
+      **Why it's an issue:** self-inflicted. `2026-02-30` passes the regex and surfaces
+      a raw .NET `FormatException` instead of the message the check exists to give;
+      `backup.sh` normalizes the same input to March 2 and proceeds. And
+      `$cutoff.ToString('yyyyMMdd')` under a non-Gregorian current culture emits a
+      far-future date, which robocopy reads as "exclude everything".
+      **Proposed fix:** `TryParseExact` with the existing message, and render with
+      `[cultureinfo]::InvariantCulture`.
+
+- [ ] **The allowlist admits unbounded, blocking, and off-host reads** — `bin/ssh-ro.sh:34`, `:38-46`
+      **Why it's an issue:** self-inflicted. `Get-Content -Wait` blocks until the
+      1800s triage timeout on a single command; `dir /s C:\` and
+      `Get-ChildItem -Recurse C:\` are unbounded. Both `type` and `Get-Content` accept
+      UNC paths, so a channel whose premise is that its operator's prompt embeds
+      attacker-influenceable remote text can be aimed at `\\host\share`, producing an
+      outbound SMB authentication from a domain-joined machine. No write or execute
+      escape was found.
+      **Proposed fix:** the surface-removing version — keep only the forms triage
+      documents, and reject a leading `\\` and `-Wait`.
+
+- [ ] **One throw abandons the remaining destinations** — `backup.ps1:496-531`
+      **Why it's an issue:** pre-existing, not a regression — `backup.sh` aborts the
+      job the same way. But the `try` wraps the whole `foreach`, so an access-denied
+      on `E:` means `F:` is never attempted on ephys3, and `last_run_result` is 1
+      either way, so the payload cannot distinguish it. The catch names neither the
+      job nor the destination.
+      **Proposed fix:** move the `try` inside the loop and name the job in the catch.
+
+- [ ] **The triage checklist keys on field names no producer emits** — `CLAUDE.md` § Diagnostic triage
+      **Why it's an issue:** pre-existing, and overlapping the earlier CLAUDE.md item.
+      `job_N_status`, `job_N_dest_used_pct` and `last_run_age_hours` are flat names
+      from an older status format; the real payload is nested (`jobs[].status`,
+      `last_run.age_hours`).
+      **Proposed fix:** use the JSON paths.
