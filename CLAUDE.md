@@ -12,8 +12,19 @@ All code is Bash — no Python, no build step, no compilation.
 | setup2 | Linux   | toor | /data        | /phobos/data, /deimos/data       |
 | setup3 | Linux   | toor | /data        | /phobos/data, /deimos/data       |
 | setup7 | Linux   | toor | /data        | /phobos/data, /deimos/data       |
-| ephys3 | Win+WSL | toor | /mnt/d/data  | /mnt/e/data, /mnt/f/data         |
-| ephys7 | Win+WSL | toor | /mnt/d/data  | /mnt/e/data (F disabled for now) |
+| ephys3 | Windows | toor | /mnt/d/data  | /mnt/e/data, /mnt/f/data         |
+| ephys7 | Windows | toor | /mnt/d/data  | /mnt/e/data (F disabled for now) |
+
+**Two runtimes.** The Linux hosts run `backup.sh` (bash, rsync). The Windows hosts
+run `backup.ps1` (PowerShell, robocopy) natively against `D:`/`E:`/`F:` — WSL is not
+in the path. `jobs.txt` still says `os=wsl` for them, which now means "this host is
+Windows" and no longer describes how the backup runs; paths stay in WSL form
+(`/mnt/d/data`) because the fleet renderer emits them that way, and `backup.ps1`
+translates them.
+
+Cutover status: **ephys7 native since 2026-08-19; ephys3 still on the WSL runtime.**
+Every script picks the runtime per host by asking the host, so a mixed fleet is a
+supported state — see `remote_has_native_windows` in `lib/remote.sh`.
 
 **Note**: setup7's old `/ganymede` and `/callisto` mount points have been renamed to `/phobos` and `/deimos`.
 
@@ -35,7 +46,8 @@ backup/
     hosts.sh           # Host lookup helpers
     fleet.sh           # Shared host-loop execution helper
     remote.sh          # Linux/WSL remote dispatch helper
-  backup.sh            # Unified runtime command: plan|run|status
+  backup.sh            # Unified runtime command (Linux/WSL): plan|run|status
+  backup.ps1           # Same three commands, native Windows (robocopy)
   jobs.txt             # GENERATED host + job config (do not edit)
   _old/                # Archived previous scripts
   CLAUDE.md            # This file
@@ -78,13 +90,19 @@ dest=/mnt/e/data
 dest=/mnt/f/data
 ```
 
-For WSL hosts, `os=wsl` tells bin scripts to wrap commands with `wsl.exe -e bash -lc "..."`.
+`os=wsl` marks a Windows host. On one still running the WSL runtime, bin scripts wrap
+commands with `wsl.exe -e bash -lc "..."`; on a cut-over host they call
+`powershell.exe` directly.
 
-**Key rule**: `bin/` scripts run from this repo; `backup.sh` is deployed to `~/backup-kit/` on each host.
+**Key rule**: `bin/` scripts run from this repo. `backup.sh` is deployed to
+`~/backup-kit/` on every host; on Windows hosts `backup.ps1` also goes to
+`C:\backup-kit\`, and that is the copy the scheduled task runs.
 
 ### Code Map
 
-- `backup.sh`: deployed runtime on each host; performs `plan`, `run`, and `status`
+- `backup.sh`: deployed runtime on Linux hosts; performs `plan`, `run`, and `status`
+- `backup.ps1`: the same three commands on Windows hosts, native (no WSL); state
+  lives in `C:\ProgramData\backup-kit`
 - `bin/deploy.sh`: deploy runtime and host-scoped jobs to one host
 - `bin/schedule.sh`: install schedule on one host (cron or Task Scheduler)
 - `bin/status-all.sh`: collect and render status from all hosts
@@ -93,7 +111,8 @@ For WSL hosts, `os=wsl` tells bin scripts to wrap commands with `wsl.exe -e bash
 - `bin/render-jobs-from-fleet.py`: regenerate `jobs.txt` from the snyderverse fleet config (`--check` for drift)
 - `lib/hosts.sh`: shared host index lookup
 - `lib/fleet.sh`: shared host iteration + failure aggregation
-- `lib/remote.sh`: shared Linux vs WSL remote command dispatch
+- `lib/remote.sh`: shared remote command dispatch, plus `remote_has_native_windows`,
+  which decides a Windows host's runtime by reading its scheduled task
 
 ---
 
@@ -105,13 +124,22 @@ These commands are safe for agents to run anytime:
 # Check status across all hosts
 bash bin/status-all.sh
 
-# Check status on one host
+# Check status on one host (picks the right runtime for you)
+bash bin/status.sh setup7
+bash bin/status.sh ephys7
+
+# Same, by hand
 ssh setup7 '~/backup-kit/backup.sh status'
-ssh ephys3 'wsl.exe -e bash -lc "~/backup-kit/backup.sh status"'
+ssh ephys7 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\backup-kit\backup.ps1 status'
+ssh ephys3 'wsl.exe -e bash -lc "~/backup-kit/backup.sh status"'   # still WSL
 
 # Preview pending changes (dry-run)
 ssh setup3 '~/backup-kit/backup.sh plan'
+ssh ephys7 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\backup-kit\backup.ps1 plan'
 ```
+
+Use `bash bin/ssh-ro.sh <host> <command>` when you want the allowlist enforced; it
+permits `type` and `dir` and a few `Get-*` cmdlets on Windows hosts.
 
 ---
 
@@ -134,7 +162,15 @@ bash bin/schedule.sh setup3
 
 # Run backup on one host (actually copies files)
 ssh setup3 '~/backup-kit/backup.sh run'
+ssh ephys7 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\backup-kit\backup.ps1 run'
+
+# Fire a Windows host's scheduled task as SYSTEM, which is what 01:00 does
+ssh ephys7 'schtasks.exe /Run /TN "BackupKit"'
 ```
+
+On a cut-over host, do **not** run `~/backup-kit/backup.sh run` through WSL: it still
+works, but it writes the WSL state file, which nothing reads any more. The run will
+look like it had no effect.
 
 ---
 
@@ -187,35 +223,66 @@ When asked to verify backup health:
 
 ### Diagnostic triage (for any host not OK)
 
-Work through these checks **in order** — stop once you find the root cause:
+Work through these checks **in order** — stop once you find the root cause.
+
+**First, know which runtime the host is on.** A Windows host whose scheduled task
+names `backup.ps1` is native; anything else is still WSL. State is in a different
+place for each:
+
+```bash
+ssh <host> 'schtasks.exe /Query /TN "BackupKit" /V /FO LIST' | grep -i "task to run"
+```
+
+| | Linux | Windows, native | Windows, WSL |
+|---|---|---|---|
+| log | `~/.local/state/backup-kit/last-run.log` | `C:\ProgramData\backup-kit\last-run.log` | `~/.local/state/backup-kit/last-run.log` |
+| state | `~/.local/state/backup-kit/last-run.txt` | `C:\ProgramData\backup-kit\last-run.txt` | same as Linux |
+| scheduler | cron | Task Scheduler, `BackupKit`, as SYSTEM | Task Scheduler, `BackupKit`, `/IT` |
 
 1. **Is a backup currently running?**
    - Linux: `ssh <host> 'pgrep -af "backup.sh run"'`
-   - WSL: `ssh <host> 'wsl.exe -e bash -lc "pgrep -af \"backup.sh run\""'`
+   - Windows, native: `ssh <host> 'schtasks.exe /Query /TN "BackupKit"'` — Status
+     reads `Running` rather than `Ready`
+   - Windows, WSL: `ssh <host> 'wsl.exe -e bash -lc "pgrep -af \"backup.sh run\""'`
    - If yes → normal, just report ETA based on pending bytes
 
 2. **Did the last run fail?** (`last_run_result` non-zero / `last_run_status=FAILED`)
-   - Read the rsync log: `ssh <host> 'cat ~/.local/state/backup-kit/last-run.log'`
-   - Common causes: mount disappeared mid-run, network timeout, permission denied
+   - Linux and WSL: `ssh <host> 'cat ~/.local/state/backup-kit/last-run.log'`
+   - Windows, native: `ssh <host> 'type C:\ProgramData\backup-kit\last-run.log'`
+   - Common causes: mount disappeared mid-run, network timeout, permission denied.
+     On Windows also check `Last Result` on the task itself — a non-zero there with
+     no log at all means the task could not start the script.
 
-3. **Are destination mounts missing?** (`job_N_status=ERROR`)
+3. **Are destinations missing?** (`job_N_status=ERROR`)
    - Linux: `ssh <host> 'mountpoint -q /phobos && echo mounted || echo NOT mounted'`
-   - WSL: `ssh <host> 'wsl.exe -e bash -lc "ls /mnt/e/data 2>&1"'`
-   - If missing → drive/NFS issue, report which mount
+   - Windows, native: `ssh <host> 'dir E:\data'` — the runtime requires the
+     destination *directory*, not just the drive letter, so a reformatted disk that
+     comes back as an empty `E:` reports ERROR rather than copying into it
+   - Windows, WSL: `ssh <host> 'wsl.exe -e bash -lc "ls /mnt/e/data 2>&1"'`
+   - If missing → drive/NFS issue, report which one
 
 4. **Is a destination disk full?** (`job_N_dest_used_pct` near 100%)
    - Check `job_N_dest_avail_human` from status output
    - If < 50GB remaining → flag as critical
 
 5. **Is the last run stale?** (`last_run_age_hours` > 30)
-   - Check whether the scheduler is still installed:
-     - Linux: `ssh <host> 'crontab -l | grep backup-kit'`
-     - WSL: `ssh <host> 'schtasks.exe /Query /TN "BackupKit"'`
-   - Check cron log for errors: `ssh <host> 'tail -50 ~/.local/state/backup-kit/cron.log'`
-   - Common causes: cron entry removed, Task Scheduler task disabled, host was rebooted and WSL didn't restart
+   - Linux: `ssh <host> 'crontab -l | grep backup-kit'`, then
+     `ssh <host> 'tail -50 ~/.local/state/backup-kit/cron.log'`
+   - Windows: `ssh <host> 'schtasks.exe /Query /TN "BackupKit" /V /FO LIST'` and read
+     three fields — `Last Run Time`, `Last Result`, and `Logon Mode`. **`Logon Mode:
+     Interactive only` means the task fires only when that account is logged in at
+     01:00**; that is the pre-2026-08-19 configuration and it is why ephys7 once went
+     36 missed runs without anyone noticing. A native task reads
+     `Interactive/Background` and `Run As User: SYSTEM`.
+   - `Get-ScheduledTaskInfo -TaskName BackupKit | Select NumberOfMissedRuns` counts
+     the skipped firings directly.
+   - Common causes: cron entry removed, task disabled, task still on `/IT`, host
+     rebooted
 
 6. **Pending files but run was recent and successful?**
-   - Likely new files created after the last 1 AM run — normal, will sync tonight
+   - Likely new files created after the last 1 AM run — normal, will sync tonight.
+     Both runtimes exclude files written today from `pending_files`, so a non-zero
+     count here means files from *yesterday or earlier* are still unbacked-up.
 
 ### Reporting format
 
@@ -249,7 +316,30 @@ After each successful rsync job, `backup.sh run` runs `make_readonly()` which se
 - Skips files already at 444 for speed on repeat runs
 - Excludes `.rsync-partial/` temp dirs
 - Directories are left writable so future rsync runs can still create new files
-- **WSL note**: on ephys3/ephys7, `chmod 444` on NTFS volumes (`/mnt/e`, `/mnt/f`) only persists if the volume is mounted with the `metadata` option. Without it, permissions appear correct within the WSL session but reset on remount and are not enforced by Windows. This is a known NTFS/DrvFs limitation, not a script bug.
+- **WSL note**: `chmod 444` on NTFS volumes from inside WSL only persists if the volume is mounted with the `metadata` option; without it permissions can appear correct in the WSL session and not be enforced by Windows. Measured on 2026-08-19, though, every destination file on both hosts *does* carry the Windows read-only attribute — ephys7 `E:` 10,192 of 10,192, ephys3 `E:` 14,536 of 14,536 and `F:` 14,454 of 14,454.
+
+### Windows hosts: robocopy
+
+`backup.ps1 run` uses the same policy with different tools:
+
+```
+/E /XN /XO           # recurse; skip files newer or older at the destination
+/Z                   # restartable copies
+/COPY:DAT /DCOPY:T   # data, attributes, timestamps
+/R:1 /W:5            # one retry, 5s apart
+```
+
+**NOT used**: `/MIR`, `/PURGE` (nothing is ever deleted from a destination).
+
+`/XC` is deliberately absent. robocopy has no equivalent of rsync's `--partial-dir`,
+so an interrupted run leaves a truncated file under its final name; that file is
+robocopy's "changed" class, which `/XC` would exclude and freeze permanently.
+Without `/XC` the next run repairs it.
+
+**Post-backup read-only pass**: `Set-DestReadOnly` sets `attrib +R` instead of
+`chmod 444`, which Windows does enforce. It skips files already read-only, and it
+leaves a file *writable* when its size disagrees with the source — that file is a
+truncated copy, and marking it read-only would prevent the repair above.
 
 ---
 
@@ -269,35 +359,55 @@ ssh setup3 '(crontab -l 2>/dev/null | grep -v backup-kit) | crontab -'
 ssh setup3 'crontab -l | grep backup-kit'
 ```
 
-### Windows (Task Scheduler via WSL)
+### Windows (Task Scheduler, as SYSTEM)
 
-**Important**: Tasks must run as the local Windows account that owns the WSL2 distro,
-with the `/IT` (interactive token) flag. WSL2 distros are registered per-user in `HKCU`,
-not system-wide — if the task runs as `SYSTEM`, `wsl.exe` finds no distro and exits with
-code -1 immediately. The `/IT` flag avoids the need to store credentials (which is blocked
-by the WUSTL.EDU domain GPO that sets `LimitBlankPasswordUse = 1`). The task only fires
-if the account is interactively logged in at 1 AM, which is expected on recording machines.
-
-- **ephys3**: Windows account is `admin`
-- **ephys7**: Windows account is `Toor`
+The task runs `backup.ps1` natively, so it runs as `SYSTEM`: no stored password, no
+logged-in user, and it fires whether or not anyone is at the machine.
 
 ```bash
-# Create task (1 AM daily) — ephys3
-ssh ephys3 'schtasks.exe /Create /TN "BackupKit" \
-  /TR "wsl.exe -e bash -lc /home/toor/backup-kit/backup.sh run" \
-  /SC DAILY /ST 01:00 /RU admin /IT /F'
+bash bin/schedule.sh ephys7        # install (idempotent)
 
-# Create task (1 AM daily) — ephys7
+# what it runs
 ssh ephys7 'schtasks.exe /Create /TN "BackupKit" \
-  /TR "wsl.exe -e bash -lc /home/toor/backup-kit/backup.sh run" \
-  /SC DAILY /ST 01:00 /RU Toor /IT /F'
+  /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\backup-kit\backup.ps1 run" \
+  /SC DAILY /ST 01:00 /RU SYSTEM /F'
 
-# Delete task
-ssh ephys3 'schtasks.exe /Delete /TN "BackupKit" /F'
+# delete
+ssh ephys7 'schtasks.exe /Delete /TN "BackupKit" /F'
 
-# Verify (check "Run As User" and "Logon Mode: Interactive only")
-ssh ephys3 'schtasks.exe /Query /TN "BackupKit" /V /FO LIST'
+# verify — Logon Mode must read "Interactive/Background", NOT "Interactive only"
+ssh ephys7 'schtasks.exe /Query /TN "BackupKit" /V /FO LIST'
 ```
+
+**Why not WSL, and why this matters.** WSL2 registers distros per-user in `HKCU`, so
+a task running as `SYSTEM` finds no distro and exits `-1`. The old task worked around
+that by running as the distro-owning account with `/IT` (interactive token), which
+avoids storing a credential — blocked here by the WUSTL.EDU domain GPO — but only
+fires when that account is interactively logged in at 01:00. It silently did not
+fire for 36 scheduled runs on ephys7. Taking WSL out of the path removes the
+constraint that forced `/IT`.
+
+`windows_user` in `jobs.txt` is a leftover of that arrangement. The native task does
+not use it.
+
+### Windows (legacy, WSL) — ephys3 until it is cut over
+
+```bash
+ssh ephys3 'schtasks.exe /Create /TN "BackupKit" \
+  /TR "wsl.exe -u toor -e bash -lc /home/toor/backup-kit/backup.sh run" \
+  /SC DAILY /ST 01:00 /RU admin /IT /F'
+```
+
+Cutting a host over is two commands, and the order matters — status follows the
+scheduled task, so the host keeps reporting from WSL until the task changes:
+
+```bash
+bash bin/deploy.sh ephys3      # puts backup.ps1 on C:\, seeds the native state file
+bash bin/schedule.sh ephys3    # replaces the task; this is the cutover
+```
+
+Rolling back is the same two steps in reverse: reinstall the WSL task with the
+command above, then delete `C:\backup-kit\backup.ps1`.
 
 ---
 
@@ -319,15 +429,33 @@ ssh ephys3 'schtasks.exe /Delete /TN "CinqBackupE" /F 2>nul; schtasks.exe /Delet
 
 ## File Locations on Hosts
 
+Linux hosts, and Windows hosts still on the WSL runtime:
+
 ```
 ~/backup-kit/
   backup.sh
   jobs.txt
 
 ~/.local/state/backup-kit/
-  last-run.log         # Rsync output from last run
-  last-run.txt         # Machine-readable last run metadata
+  last-run.log         # rsync output from the last run
+  last-run.txt         # machine-readable last-run metadata
+  cron.log             # scheduler output (Linux)
 ```
+
+Windows hosts on the native runtime:
+
+```
+C:\backup-kit\
+  backup.ps1
+  jobs.txt             # host-scoped, still in WSL path form
+
+C:\ProgramData\backup-kit\
+  last-run.log         # robocopy output from the last run
+  last-run.txt         # same key=value format as the Linux runtime
+```
+
+A cut-over host keeps its WSL copies. They are the rollback path, and nothing reads
+them while the native task is installed.
 
 ---
 
@@ -341,7 +469,11 @@ ssh ephys3 'schtasks.exe /Delete /TN "CinqBackupE" /F 2>nul; schtasks.exe /Delet
 
 ## Rollback
 
-To revert to previous backup system:
+To revert one Windows host from the native runtime, see the two commands at the end
+of § Scheduling — reinstall the WSL task first, then delete `C:\backup-kit\backup.ps1`.
+Deleting the script alone leaves the task pointing at a file that is not there.
+
+To revert to the pre-backup-kit system:
 
 1. Old scripts are preserved in `_old/` directory
 2. Old deployed scripts on hosts were at `~/.local/bin/backup`

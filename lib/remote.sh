@@ -23,20 +23,22 @@ remote_exec() {
     fi
 }
 
-# True when a Windows host has the native runtime deployed.
+# True when a Windows host's scheduled task runs the native runtime.
 #
-# The two runtimes coexist during cutover: deploy.sh adds backup.ps1 on the
-# Windows side without removing the WSL copy, and callers ask the host which
-# one is there rather than being told by config. jobs.txt is generated from the
-# snyderverse fleet config and cannot carry a per-host runtime flag, and this
-# way a rollback is deleting one file on one host, not editing code.
-# TODO(review 2026-08-19): that last sentence is wrong — deleting backup.ps1 leaves
-# the SYSTEM task pointing at it, and no code path restores the WSL task.
+# The two runtimes coexist during cutover: bin/deploy.sh installs backup.ps1 on
+# every Windows host, while scheduling it is a separate, per-host step. So the
+# file's presence does not answer the question status collection actually asks —
+# which runtime wrote the state file it is about to read. The task's /TR string
+# does, and it is what changes at the moment of cutover. Matching on the value
+# rather than the "Task To Run" label also survives a non-English Windows.
+#
+# Rolling a host back is therefore two operations: reinstall the WSL task, and
+# remove C:\backup-kit\backup.ps1.
 # Args: <host> [ssh options...]
 remote_has_native_windows() {
     local host="$1"
     shift
 
-    ssh "$@" "$host" "if exist $WIN_KIT_DIR\\backup.ps1 (exit 0) else (exit 1)" \
-        >/dev/null 2>&1
+    ssh "$@" "$host" "schtasks.exe /Query /TN \"BackupKit\" /V /FO LIST" 2>/dev/null \
+        | grep -qi 'backup\.ps1'
 }

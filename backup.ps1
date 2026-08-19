@@ -10,11 +10,10 @@ distro-owning user, which needs either a stored password (blocked by the
 domain GPO) or /IT (fires only when that account is interactively logged in).
 Doing the same work natively lets the task run as SYSTEM, which needs neither.
 
-TODO(review 2026-08-19): "byte-compatible" overstates this — the human-readable
-strings use different formulas. See ROADMAP "Review findings — Windows-native
-backup runtime".
-The output must be byte-compatible with `backup.sh status --raw`: bin/status-all.sh
-merges it into the fleet JSON and lib/gate.sh evaluates it field by field.
+The output must carry the same field names and types as `backup.sh status --raw`:
+bin/status-all.sh merges it into the fleet JSON and lib/gate.sh evaluates it field
+by field. The human-readable strings (`pending_human`, `dest_avail_human`) are
+rendered differently by the two runtimes and no consumer compares them.
 Two consequences worth knowing before editing:
 
   * src/dest are reported as the WSL-style paths from jobs.txt (/mnt/d/data),
@@ -89,9 +88,7 @@ function Format-Iec {
 # Newest mtime under $Path, or -1 when the tree is unreadable or empty.
 # lib/gate.sh treats -1 as "source not proven readable" and refuses to
 # downgrade a stale host to informational, so this must never guess.
-# TODO(review 2026-08-19): the "millions" figure is unsourced; 449 measured on
-# ephys7. See ROADMAP "Review findings — Windows-native backup runtime".
-# Streamed rather than collected: D:\data holds millions of files.
+# Streamed rather than collected, so the source tree does not have to fit in memory.
 function Get-LastFileEpoch {
     param([string]$Path)
 
@@ -137,12 +134,15 @@ $RoboSelect = @('/E', '/XN', '/XO')
 function Get-PendingWork {
     param([string]$Src, [string]$Dest, [string]$MinAgeDate)
 
+    # Function-scoped, so it reverts on return. The global 'Stop' turns a native
+    # command's stderr into a terminating error, which would unwind past the rc
+    # check below and cost the caller the per-destination JOB_ERROR it needs.
+    $ErrorActionPreference = 'Continue'
+
     $roboArgs = @($Src, $Dest) + $RoboSelect + @('/L',
                   '/BYTES', '/NFL', '/NDL', '/NP', '/R:0', '/W:0')
     if ($MinAgeDate) { $roboArgs += "/MINAGE:$MinAgeDate" }
 
-    # TODO(review 2026-08-19): the 2>&1 makes any robocopy stderr a terminating
-    # error under $ErrorActionPreference='Stop', bypassing the rc check below.
     $output = & robocopy.exe @roboArgs 2>&1 | Out-String
     $rc = $LASTEXITCODE
 
@@ -192,16 +192,21 @@ function Read-JobLines {
     return $lines
 }
 
-# True when the volume holding $PathWin is present. robocopy against a missing
-# volume takes its own sweet time to fail, and the message it gives is worse.
-# TODO(review 2026-08-19): this checks the volume root only, where backup.sh's
-# check_mount requires the destination directory itself. A reformatted disk reads
-# as PENDING and gets a fresh full copy.
+# True when the destination is present and usable. Checked before robocopy, which
+# takes its own sweet time to fail against a missing volume and gives a worse
+# message when it does.
+#
+# The directory itself must exist, not merely its volume — this mirrors
+# backup.sh's check_mount, which requires `[ -d "$path" ]`. A disk that was
+# replaced or reformatted comes back as a valid empty E:, and without this check
+# robocopy would create E:\data and start a fresh full copy into it, reporting
+# PENDING and then OK while the real backup is gone.
 function Test-DestVolume {
     param([string]$PathWin)
     $root = [System.IO.Path]::GetPathRoot($PathWin)
     if (-not $root) { return $false }
-    return (Test-Path -LiteralPath $root)
+    if (-not (Test-Path -LiteralPath $root)) { return $false }
+    return (Test-Path -LiteralPath $PathWin -PathType Container)
 }
 
 function Get-DestDisk {
@@ -252,13 +257,22 @@ function Read-LastRun {
 }
 
 function Get-StatusJson {
-    # TODO(review 2026-08-19): backup.sh defaults this cutoff to today's midnight;
-    # without it the two runtimes disagree on what counts as pending.
-    $minAgeDate = ''
+    # backup.sh applies this cutoff whether or not --before is passed
+    # (`${before_date:-$(date +%Y-%m-%d)}`), so files written today are excluded
+    # from pending on both runtimes. Without it a Windows host reports PENDING on
+    # a recording day where a Linux host reports OK, and a job with pending files
+    # can never reach the informational STALE_IDLE downgrade.
+    #
+    # The cutoff means "count files modified before this date", and robocopy's
+    # /MINAGE:<date> excludes files newer than that date's midnight — the same
+    # boundary. Verified on ephys7, 2026-08-19: with the default cutoff a file
+    # written that afternoon is excluded and one written the day before is not.
+    $cutoff = (Get-Date).Date
     if ($Before) {
-        if ($Before -notmatch '^\d{4}-\d{2}-\d{2}$') { throw '--Before must be YYYY-MM-DD' }
-        $minAgeDate = $Before -replace '-', ''
+        if ($Before -notmatch '^\d{4}-\d{2}-\d{2}$') { throw '-Before must be YYYY-MM-DD' }
+        $cutoff = [datetime]::ParseExact($Before, 'yyyy-MM-dd', $null)
     }
+    $minAgeDate = $cutoff.ToString('yyyyMMdd')
 
     $lastRun = Read-LastRun
     $ageHours = -1
@@ -310,7 +324,7 @@ function Get-StatusJson {
         # Mount check first: robocopy against a missing volume is slow to fail.
         if (-not (Test-DestVolume $destWin)) {
             $jobStatus = 'ERROR'
-            $jobError = "destination volume not available: $destWin"
+            $jobError = "destination not available: $destWin"
         } else {
             $pending = Get-PendingWork -Src $srcWin -Dest $destWin -MinAgeDate $minAgeDate
             if (-not $pending.Ok) {
@@ -379,7 +393,7 @@ function Invoke-Plan {
         Write-Output "=== $($jobLine.Src) -> $($jobLine.Dest) ==="
 
         if (-not (Test-DestVolume $jobLine.DestWin)) {
-            Write-Output "ERROR: destination volume not available: $($jobLine.DestWin)"
+            Write-Output "ERROR: destination not available: $($jobLine.DestWin)"
             Write-Output ''
             continue
         }
@@ -466,8 +480,12 @@ function Write-LastRun {
 #                   retries 30s apart, which would hang the 1 AM job for weeks.
 #   /LOG+ /TEE      append to last-run.log and echo to stdout for cron.log
 # No /MIR and no /PURGE: nothing may ever be deleted from a destination.
-# TODO(review 2026-08-19): no try/finally — a throw skips Write-LastRun and leaves
-# the previous run's success on record. Fail-open against backup.sh.
+# The result is recorded from `finally` on purpose. $ErrorActionPreference is
+# 'Stop', so an unhandled throw anywhere in the loop — a file held open by an
+# acquisition process, an ACL SYSTEM cannot rewrite — would otherwise unwind past
+# the write and leave the PREVIOUS run's success in last-run.txt. lib/gate.sh
+# reads that field, so the failed run would be invisible for a full day.
+# backup.sh writes its result unconditionally (backup.sh:180); this matches it.
 function Invoke-Run {
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
     $logFile = Join-Path $StateDir 'last-run.log'
@@ -475,41 +493,46 @@ function Invoke-Run {
         -Value "backup-kit run $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))"
 
     $worst = 0
-    foreach ($jobLine in (Read-JobLines)) {
-        Write-Tee "=== Backup: $($jobLine.Src) -> $($jobLine.Dest) ===" $logFile
-        $started = Get-Date
-        Write-Tee "Started: $($started.ToString('yyyy-MM-dd HH:mm:ss'))" $logFile
+    try {
+        foreach ($jobLine in (Read-JobLines)) {
+            Write-Tee "=== Backup: $($jobLine.Src) -> $($jobLine.Dest) ===" $logFile
+            $started = Get-Date
+            Write-Tee "Started: $($started.ToString('yyyy-MM-dd HH:mm:ss'))" $logFile
 
-        if (-not (Test-DestVolume $jobLine.DestWin)) {
-            Write-Tee "FAILED: destination volume not available: $($jobLine.DestWin)" $logFile
-            if ($worst -lt 1) { $worst = 1 }
-            continue
+            if (-not (Test-DestVolume $jobLine.DestWin)) {
+                Write-Tee "FAILED: destination not available: $($jobLine.DestWin)" $logFile
+                if ($worst -lt 1) { $worst = 1 }
+                continue
+            }
+
+            $roboArgs = @($jobLine.SrcWin, $jobLine.DestWin) + $RoboSelect +
+                        @('/Z', '/COPY:DAT', '/DCOPY:T', '/R:1', '/W:5',
+                          '/BYTES', '/NP', "/LOG+:$logFile", '/TEE')
+            & robocopy.exe @roboArgs
+            $rc = $LASTEXITCODE
+
+            # 0-7 is success (bits: 1 copied, 2 extras present, 4 mismatched).
+            # 8 and above is a real failure. Passing robocopy's code through
+            # unmapped would report every successful copy as a failed run to
+            # lib/gate.sh, which reads last_run_result.
+            if ($rc -ge 8) {
+                Write-Tee "FAILED: robocopy exited $rc" $logFile
+                if ($worst -lt $rc) { $worst = $rc }
+            } else {
+                Set-DestReadOnly -SrcWin $jobLine.SrcWin -DestWin $jobLine.DestWin -LogFile $logFile
+            }
+
+            $secs = [int]((Get-Date) - $started).TotalSeconds
+            Write-Tee "Finished: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) (${secs}s, robocopy exit $rc)" $logFile
+            Write-Tee '' $logFile
         }
-
-        $roboArgs = @($jobLine.SrcWin, $jobLine.DestWin) + $RoboSelect +
-                    @('/Z', '/COPY:DAT', '/DCOPY:T', '/R:1', '/W:5',
-                      '/BYTES', '/NP', "/LOG+:$logFile", '/TEE')
-        & robocopy.exe @roboArgs
-        $rc = $LASTEXITCODE
-
-        # 0-7 is success (bits: 1 copied, 2 extras present, 4 mismatched).
-        # 8 and above is a real failure. Passing robocopy's code through
-        # unmapped would report every successful copy as a failed run to
-        # lib/gate.sh, which reads last_run_result.
-        if ($rc -ge 8) {
-            Write-Tee "FAILED: robocopy exited $rc" $logFile
-            if ($worst -lt $rc) { $worst = $rc }
-        } else {
-            Set-DestReadOnly -SrcWin $jobLine.SrcWin -DestWin $jobLine.DestWin -LogFile $logFile
-        }
-
-        $secs = [int]((Get-Date) - $started).TotalSeconds
-        Write-Tee "Finished: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) (${secs}s, robocopy exit $rc)" $logFile
-        Write-Tee '' $logFile
+    } catch {
+        Write-Tee "FAILED: $($_.Exception.Message)" $logFile
+        if ($worst -lt 1) { $worst = 1 }
+    } finally {
+        Write-LastRun $worst
+        $script:RunExitCode = $worst
     }
-
-    Write-LastRun $worst
-    $script:RunExitCode = $worst
 }
 
 switch ($Command) {
