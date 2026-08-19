@@ -163,7 +163,10 @@ function Get-DestDisk {
         UsedKb     = $usedKb
         AvailKb    = $availKb
         AvailHuman = (Format-Iec $disk.FreeSpace)
-        UsedPct    = ('{0}%' -f [int][math]::Round(($usedKb / $totalKb) * 100))
+        # df -P rounds the use% UP, and computes it over used+avail rather than
+        # the raw size. Match both, or a destination reads one point cleaner
+        # here than it does on the Linux hosts.
+        UsedPct    = ('{0}%' -f [int][math]::Ceiling(($usedKb / ($usedKb + $availKb)) * 100))
     }
 }
 

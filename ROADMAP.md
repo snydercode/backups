@@ -145,9 +145,11 @@ fleet capture; jq null-concatenation triggers ruled out — null is identity for
       `usage()` idiom; `send_email`'s unused return scaffolding.
       **Proposed fix:** apply as one cleanup pass alongside the ack-schema change.
 - [ ] **backup.ps1 is a status-only spike; plan and run are unimplemented** — `backup.ps1`
-      **Why it's an issue:** the status contract is proven — on ephys7
-      (2026-08-19) the PowerShell output produced findings identical to the WSL
-      runtime's when fed to `gate_evaluate`, with `dest_total_kb`,
+      **Why it's an issue:** the status contract is proven — on ephys3 and
+      ephys7 (2026-08-19) the PowerShell output produced findings identical to
+      the WSL runtime's when fed to `gate_evaluate`. On ephys3, whose two
+      destinations exercise the multi-job path, the whole `jobs` array is
+      byte-identical to the WSL runtime's, with `dest_total_kb`,
       `dest_used_kb`, `dest_avail_kb`, `dest_avail_human` and `dest_used_pct`
       matching `df -P` exactly. Nothing else is written. `plan` and `run`
       throw, so no host can switch yet.
