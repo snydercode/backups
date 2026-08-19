@@ -143,8 +143,21 @@ function Get-PendingWork {
                   '/BYTES', '/NFL', '/NDL', '/NP', '/R:0', '/W:0')
     if ($MinAgeDate) { $roboArgs += "/MINAGE:$MinAgeDate" }
 
+    # $LASTEXITCODE survives across calls, so a robocopy that never launches — an
+    # AppLocker or WDAC policy, AV, a PATH without System32 — would otherwise leave
+    # the previous job's exit code in place and read as a clean run with nothing
+    # pending. Verified on ephys7, 2026-08-19: rc stayed 0 and no summary appeared.
+    $global:LASTEXITCODE = $null
     $output = & robocopy.exe @roboArgs 2>&1 | Out-String
     $rc = $LASTEXITCODE
+
+    # No summary block means robocopy did not run to completion, whatever $rc says.
+    if ($null -eq $rc -or $output -notmatch '(?m)^\s*Files\s*:') {
+        return [pscustomobject]@{
+            Ok = $false
+            Error = "robocopy produced no summary (exit $rc); did it start?"
+        }
+    }
 
     if ($rc -ge 8) {
         return [pscustomobject]@{

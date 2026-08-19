@@ -23,22 +23,32 @@ remote_exec() {
     fi
 }
 
-# True when a Windows host's scheduled task runs the native runtime.
+# The scheduled task's name, on every Windows host.
+WIN_TASK_NAME="BackupKit"
+
+# Which runtime a Windows host's scheduled task actually runs.
 #
 # The two runtimes coexist during cutover: bin/deploy.sh installs backup.ps1 on
 # every Windows host, while scheduling it is a separate, per-host step. So the
-# file's presence does not answer the question status collection actually asks —
-# which runtime wrote the state file it is about to read. The task's /TR string
-# does, and it is what changes at the moment of cutover. Matching on the value
-# rather than the "Task To Run" label also survives a non-English Windows.
+# file's presence does not answer the question status collection asks — which
+# runtime wrote the state file it is about to read. The task's /TR string does.
+# Matching on the value rather than the "Task To Run" label also survives a
+# non-English Windows.
 #
-# Rolling a host back is therefore two operations: reinstall the WSL task, and
-# remove C:\backup-kit\backup.ps1.
+# A failed probe is its own answer. Folding it into "not native" would make one
+# hiccuped schtasks query send status collection to a state file that has not
+# been written since cutover, which reads as a stale host that is in fact fine.
+#
 # Args: <host> [ssh options...]
-remote_has_native_windows() {
+# Returns: 0 native, 1 WSL, 2 probe failed
+remote_windows_runtime() {
     local host="$1"
     shift
 
-    ssh "$@" "$host" "schtasks.exe /Query /TN \"BackupKit\" /V /FO LIST" 2>/dev/null \
-        | grep -qi 'backup\.ps1'
+    local out
+    out="$(ssh "$@" "$host" "schtasks.exe /Query /TN \"$WIN_TASK_NAME\" /V /FO LIST" 2>/dev/null)" \
+        || return 2
+
+    grep -qi 'backup\.ps1' <<< "$out" && return 0
+    return 1
 }

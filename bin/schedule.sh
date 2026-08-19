@@ -61,11 +61,51 @@ schedule_linux() {
     }
 }
 
+# Bring the native state file up to date with the WSL one.
+#
+# This runs at schedule time, not deploy time, because installing the task is
+# what flips bin/status.sh to the native runtime. Seeding any earlier leaves a
+# stale timestamp to be read at the moment of cutover, and a host that is backing
+# up correctly reports an un-ackable STALE_RUN until its first native run.
+#
+# Newer wins, so a re-run cannot rewind the history the native runtime has
+# written for itself.
+seed_native_state() {
+    local host="$1"
+
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    local wsl_file="$tmp_dir/wsl" native_file="$tmp_dir/native"
+    ssh "$host" "wsl.exe -e bash -lc \"cat $REMOTE_STATE_DIR/last-run.txt\"" \
+        > "$wsl_file" 2>/dev/null || true
+    if [[ ! -s "$wsl_file" ]]; then
+        echo "  no WSL last-run.txt to seed from" >&2
+        return 0
+    fi
+    ssh "$host" "type $WIN_STATE_DIR\\last-run.txt" > "$native_file" 2>/dev/null || true
+
+    local wsl_epoch native_epoch
+    wsl_epoch="$(sed -n 's/^last_run_epoch=\([0-9]*\).*/\1/p' "$wsl_file" | head -1)"
+    native_epoch="$(sed -n 's/^last_run_epoch=\([0-9]*\).*/\1/p' "$native_file" | head -1)"
+
+    if [[ "${wsl_epoch:-0}" -gt "${native_epoch:-0}" ]]; then
+        ssh "$host" "if not exist $WIN_STATE_DIR mkdir $WIN_STATE_DIR"
+        scp -q "$wsl_file" "$host:C:/ProgramData/backup-kit/last-run.txt"
+        echo "  seeded last-run.txt from the WSL runtime"
+    else
+        echo "  native last-run.txt is already current"
+    fi
+}
+
 # os=wsl in jobs.txt means "this host is Windows". It no longer describes how
 # the backup runs: the task calls backup.ps1 directly, and WSL is out of the
 # path entirely. That is what lets /RU SYSTEM work — see the comment below.
 schedule_windows() {
     local host="$1"
+
+    seed_native_state "$host"
 
     echo "  Installing Task Scheduler job (Run As: SYSTEM)..."
 

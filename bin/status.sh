@@ -154,11 +154,24 @@ main() {
     local is_wsl="${IS_WSL[$host_index]}"
     local output
 
-    # A Windows host answers from whichever runtime is deployed on it. The
-    # probe costs one extra ssh round trip per host per check and keeps a
+    # A Windows host answers from whichever runtime its scheduled task runs. The
+    # probe costs one extra ssh round trip per Windows host per check and keeps a
     # half-migrated fleet reporting correctly in both directions.
-    if [[ "$is_wsl" == "1" ]] \
-        && remote_has_native_windows "$host" -o BatchMode=yes -o ConnectTimeout=10; then
+    local runtime=0
+    if [[ "$is_wsl" == "1" ]]; then
+        remote_windows_runtime "$host" -o BatchMode=yes -o ConnectTimeout=10 \
+            || runtime=$?
+        # A probe that could not answer must not be treated as "still on WSL":
+        # on a cut-over host that reads a state file nothing has written since
+        # cutover, and a healthy host reports as stale. Fail loudly instead.
+        if [[ "$runtime" -ge 2 ]]; then
+            echo "ERROR: could not determine the backup runtime on $host" >&2
+            echo "       (schtasks query for $WIN_TASK_NAME failed)" >&2
+            exit 1
+        fi
+    fi
+
+    if [[ "$runtime" -eq 0 && "$is_wsl" == "1" ]]; then
         local win_cmd="powershell.exe -NoProfile -ExecutionPolicy Bypass"
         win_cmd="$win_cmd -File $WIN_KIT_DIR\\backup.ps1 status"
         # Unquoted on purpose: cmd.exe would pass the quotes through to

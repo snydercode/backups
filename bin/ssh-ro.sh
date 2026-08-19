@@ -40,7 +40,7 @@ allowed_command() {
             ps="${ps#[\"\']}"
             ps="${ps%[\"\']}"
             case "$ps" in
-                Get-Content\ *|Get-ChildItem\ *|Get-ScheduledTaskInfo*|Get-Item\ *) return 0 ;;
+                Get-Content\ *|Get-ScheduledTaskInfo*) return 0 ;;
                 *) return 1 ;;
             esac
             ;;

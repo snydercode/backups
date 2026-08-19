@@ -29,35 +29,6 @@ usage() {
     exit 2
 }
 
-# Copy the WSL runtime's last-run.txt to the Windows side, once.
-#
-# Without it the first native status reports NEVER_RUN for a host that has been
-# backing up for months, and lib/gate.sh turns that into a failing finding on a
-# healthy machine. Never overwrites: after cutover the native runtime owns this
-# file, and reseeding it from a stale WSL copy would rewind the run history.
-deploy_seed_native_state() {
-    local host="$1"
-    local tmp_dir
-    tmp_dir="$(dirname "$2")"
-
-    if ssh "$host" "if exist $WIN_STATE_DIR\\last-run.txt (exit 0) else (exit 1)"; then
-        echo "  native last-run.txt already present, leaving it alone"
-        return 0
-    fi
-
-    local seed_file="$tmp_dir/last-run.seed"
-    if ssh "$host" "wsl.exe -e bash -lc \"cat $REMOTE_STATE_DIR/last-run.txt\"" \
-        > "$seed_file" 2>/dev/null && [[ -s "$seed_file" ]]; then
-        scp -q "$seed_file" "$host:C:/ProgramData/backup-kit/last-run.txt"
-        rm -f "$seed_file"
-        echo "  seeded last-run.txt from the WSL runtime"
-    else
-        rm -f "$seed_file"
-        echo "  WARNING: no WSL last-run.txt to seed — the first status on $host" >&2
-        echo "           will report NEVER_RUN and the health check will fail it" >&2
-    fi
-}
-
 main() {
     local host="${1:-}"
 
@@ -163,16 +134,16 @@ main() {
 
         ssh "$host" "wsl.exe -e bash -lc \"chmod +x $REMOTE_KIT_DIR/*.sh\""
 
-        # The native runtime, on the Windows filesystem. The WSL copy above
-        # stays put: it costs nothing, and it is the rollback path if the
-        # native runtime has to be pulled from one host in a hurry.
+        # The native runtime, on the Windows filesystem. The WSL copy above stays
+        # put: it costs nothing, and rolling a host back needs it. Installing this
+        # file changes nothing on its own — bin/schedule.sh is what cuts a host
+        # over, and bin/status.sh follows the scheduled task, not the file.
         echo "  copying backup.ps1 -> $WIN_KIT_DIR"
         ssh "$host" "if not exist $WIN_KIT_DIR mkdir $WIN_KIT_DIR"
         scp -q "$BACKUP_PS1" "$host:C:/backup-kit/backup.ps1"
         scp -q "$tmp_jobs_file" "$host:C:/backup-kit/jobs.txt"
 
         ssh "$host" "if not exist $WIN_STATE_DIR mkdir $WIN_STATE_DIR"
-        deploy_seed_native_state "$host" "$tmp_jobs_file"
     else
         echo "  [Linux host]"
 

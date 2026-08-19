@@ -230,8 +230,10 @@ names `backup.ps1` is native; anything else is still WSL. State is in a differen
 place for each:
 
 ```bash
-ssh <host> 'schtasks.exe /Query /TN "BackupKit" /V /FO LIST' | grep -i "task to run"
+bash bin/ssh-ro.sh <host> 'schtasks.exe /Query /TN "BackupKit" /V /FO LIST'
 ```
+
+Read `Task To Run`: `powershell.exe ... backup.ps1` is native, `wsl.exe ...` is not.
 
 | | Linux | Windows, native | Windows, WSL |
 |---|---|---|---|
@@ -247,8 +249,8 @@ ssh <host> 'schtasks.exe /Query /TN "BackupKit" /V /FO LIST' | grep -i "task to 
    - If yes → normal, just report ETA based on pending bytes
 
 2. **Did the last run fail?** (`last_run_result` non-zero / `last_run_status=FAILED`)
-   - Linux and WSL: `ssh <host> 'cat ~/.local/state/backup-kit/last-run.log'`
-   - Windows, native: `ssh <host> 'type C:\ProgramData\backup-kit\last-run.log'`
+   - Linux and WSL: `bash bin/ssh-ro.sh <host> 'cat ~/.local/state/backup-kit/last-run.log'`
+   - Windows, native: `bash bin/ssh-ro.sh <host> 'type C:\ProgramData\backup-kit\last-run.log'`
    - Common causes: mount disappeared mid-run, network timeout, permission denied.
      On Windows also check `Last Result` on the task itself — a non-zero there with
      no log at all means the task could not start the script.
@@ -258,7 +260,7 @@ ssh <host> 'schtasks.exe /Query /TN "BackupKit" /V /FO LIST' | grep -i "task to 
    - Windows, native: `ssh <host> 'dir E:\data'` — the runtime requires the
      destination *directory*, not just the drive letter, so a reformatted disk that
      comes back as an empty `E:` reports ERROR rather than copying into it
-   - Windows, WSL: `ssh <host> 'wsl.exe -e bash -lc "ls /mnt/e/data 2>&1"'`
+   - Windows, WSL: `ssh <host> 'wsl.exe -e bash -lc "ls /mnt/e/data"'`
    - If missing → drive/NFS issue, report which one
 
 4. **Is a destination disk full?** (`job_N_dest_used_pct` near 100%)
@@ -274,8 +276,9 @@ ssh <host> 'schtasks.exe /Query /TN "BackupKit" /V /FO LIST' | grep -i "task to 
      01:00**; that is the pre-2026-08-19 configuration and it is why ephys7 once went
      36 missed runs without anyone noticing. A native task reads
      `Interactive/Background` and `Run As User: SYSTEM`.
-   - `Get-ScheduledTaskInfo -TaskName BackupKit | Select NumberOfMissedRuns` counts
-     the skipped firings directly.
+   - `bash bin/ssh-ro.sh <host> 'powershell.exe -NoProfile -Command "Get-ScheduledTaskInfo -TaskName BackupKit"'`
+     counts the skipped firings directly (`NumberOfMissedRuns`). No pipe — the
+     read-only wrapper rejects one.
    - Common causes: cron entry removed, task disabled, task still on `/IT`, host
      rebooted
 
@@ -392,10 +395,19 @@ not use it.
 
 ### Windows (legacy, WSL) — ephys3 until it is cut over
 
+The `/RU` account differs per host — it is `windows_user` in `jobs.txt`, and using
+the wrong one silently installs a task that can never run:
+
 ```bash
+# ephys3
 ssh ephys3 'schtasks.exe /Create /TN "BackupKit" \
   /TR "wsl.exe -u toor -e bash -lc /home/toor/backup-kit/backup.sh run" \
   /SC DAILY /ST 01:00 /RU admin /IT /F'
+
+# ephys7
+ssh ephys7 'schtasks.exe /Create /TN "BackupKit" \
+  /TR "wsl.exe -u toor -e bash -lc /home/toor/backup-kit/backup.sh run" \
+  /SC DAILY /ST 01:00 /RU Toor /IT /F'
 ```
 
 Cutting a host over is two commands, and the order matters — status follows the
@@ -407,7 +419,10 @@ bash bin/schedule.sh ephys3    # replaces the task; this is the cutover
 ```
 
 Rolling back is the same two steps in reverse: reinstall the WSL task with the
-command above, then delete `C:\backup-kit\backup.ps1`.
+matching command above — `/RU admin` on ephys3, `/RU Toor` on ephys7 — then delete
+`C:\backup-kit\backup.ps1`. Reinstalling the WSL task flips reporting back to a
+state file frozen at cutover, so expect one stale-looking day until the first WSL
+run writes it again.
 
 ---
 
