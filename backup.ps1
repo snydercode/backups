@@ -10,6 +10,9 @@ distro-owning user, which needs either a stored password (blocked by the
 domain GPO) or /IT (fires only when that account is interactively logged in).
 Doing the same work natively lets the task run as SYSTEM, which needs neither.
 
+TODO(review 2026-08-19): "byte-compatible" overstates this — the human-readable
+strings use different formulas. See ROADMAP "Review findings — Windows-native
+backup runtime".
 The output must be byte-compatible with `backup.sh status --raw`: bin/status-all.sh
 merges it into the fleet JSON and lib/gate.sh evaluates it field by field.
 Two consequences worth knowing before editing:
@@ -86,6 +89,8 @@ function Format-Iec {
 # Newest mtime under $Path, or -1 when the tree is unreadable or empty.
 # lib/gate.sh treats -1 as "source not proven readable" and refuses to
 # downgrade a stale host to informational, so this must never guess.
+# TODO(review 2026-08-19): the "millions" figure is unsourced; 449 measured on
+# ephys7. See ROADMAP "Review findings — Windows-native backup runtime".
 # Streamed rather than collected: D:\data holds millions of files.
 function Get-LastFileEpoch {
     param([string]$Path)
@@ -136,6 +141,8 @@ function Get-PendingWork {
                   '/BYTES', '/NFL', '/NDL', '/NP', '/R:0', '/W:0')
     if ($MinAgeDate) { $roboArgs += "/MINAGE:$MinAgeDate" }
 
+    # TODO(review 2026-08-19): the 2>&1 makes any robocopy stderr a terminating
+    # error under $ErrorActionPreference='Stop', bypassing the rc check below.
     $output = & robocopy.exe @roboArgs 2>&1 | Out-String
     $rc = $LASTEXITCODE
 
@@ -187,6 +194,9 @@ function Read-JobLines {
 
 # True when the volume holding $PathWin is present. robocopy against a missing
 # volume takes its own sweet time to fail, and the message it gives is worse.
+# TODO(review 2026-08-19): this checks the volume root only, where backup.sh's
+# check_mount requires the destination directory itself. A reformatted disk reads
+# as PENDING and gets a fresh full copy.
 function Test-DestVolume {
     param([string]$PathWin)
     $root = [System.IO.Path]::GetPathRoot($PathWin)
@@ -242,6 +252,8 @@ function Read-LastRun {
 }
 
 function Get-StatusJson {
+    # TODO(review 2026-08-19): backup.sh defaults this cutoff to today's midnight;
+    # without it the two runtimes disagree on what counts as pending.
     $minAgeDate = ''
     if ($Before) {
         if ($Before -notmatch '^\d{4}-\d{2}-\d{2}$') { throw '--Before must be YYYY-MM-DD' }
@@ -454,6 +466,8 @@ function Write-LastRun {
 #                   retries 30s apart, which would hang the 1 AM job for weeks.
 #   /LOG+ /TEE      append to last-run.log and echo to stdout for cron.log
 # No /MIR and no /PURGE: nothing may ever be deleted from a destination.
+# TODO(review 2026-08-19): no try/finally — a throw skips Write-LastRun and leaves
+# the previous run's success on record. Fail-open against backup.sh.
 function Invoke-Run {
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
     $logFile = Join-Path $StateDir 'last-run.log'

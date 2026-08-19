@@ -166,6 +166,8 @@ main() {
         # The native runtime, on the Windows filesystem. The WSL copy above
         # stays put: it costs nothing, and it is the rollback path if the
         # native runtime has to be pulled from one host in a hurry.
+        # TODO(review 2026-08-19): installing the file flips bin/status.sh to the
+        # native runtime even though scheduling is a separate step — see ROADMAP.
         echo "  copying backup.ps1 -> $WIN_KIT_DIR"
         ssh "$host" "if not exist $WIN_KIT_DIR mkdir $WIN_KIT_DIR"
         scp -q "$BACKUP_PS1" "$host:C:/backup-kit/backup.ps1"

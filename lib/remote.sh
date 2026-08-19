@@ -30,6 +30,8 @@ remote_exec() {
 # one is there rather than being told by config. jobs.txt is generated from the
 # snyderverse fleet config and cannot carry a per-host runtime flag, and this
 # way a rollback is deleting one file on one host, not editing code.
+# TODO(review 2026-08-19): that last sentence is wrong — deleting backup.ps1 leaves
+# the SYSTEM task pointing at it, and no code path restores the WSL task.
 # Args: <host> [ssh options...]
 remote_has_native_windows() {
     local host="$1"
