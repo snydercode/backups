@@ -14,6 +14,9 @@ source "$REPO_DIR/lib/remote.sh"
 
 REMOTE_KIT_DIR="/home/toor/backup-kit"
 REMOTE_STATE_DIR="/home/toor/.local/state/backup-kit"
+# Windows hosts run the native runtime from the Windows filesystem, not from
+# inside the distro: the whole point is that the task never touches WSL.
+WIN_KIT_DIR="C:\\backup-kit"
 SCHEDULE_TIME="01:00"
 
 HOSTS=()
@@ -61,26 +64,32 @@ schedule_linux() {
     }
 }
 
-schedule_wsl() {
+# os=wsl in jobs.txt means "this host is Windows". It no longer describes how
+# the backup runs: the task calls backup.ps1 directly, and WSL is out of the
+# path entirely. That is what lets /RU SYSTEM work — see the comment below.
+schedule_windows() {
     local host="$1"
-    local win_user="$2"
 
-    echo "  Installing Task Scheduler job (Run As: $win_user)..."
+    echo "  Installing Task Scheduler job (Run As: SYSTEM)..."
 
-    # Create/replace task (idempotent via /F flag)
-    # /IT: interactive token — runs only when win_user is logged in interactively.
-    # This is required because WSL2 distros are registered per-user in HKCU;
-    # SYSTEM has no distro registration and always fails with exit -1.
+    # /RU SYSTEM with no /IT and no password. The old task ran as the
+    # distro-owning user with /IT because WSL2 registers distros per-user in
+    # HKCU, so SYSTEM could not find one. Running natively removes that
+    # constraint, and with it the requirement that somebody be interactively
+    # logged in at 01:00 — which is why ephys7 went 34 days without a backup.
     ssh "$host" \
         "schtasks.exe /Create /TN \"BackupKit\" \
-         /TR \"wsl.exe -u toor -e bash -lc $REMOTE_KIT_DIR/backup.sh run\" \
-         /SC DAILY /ST $SCHEDULE_TIME /RU \"$win_user\" /IT /F" || {
+         /TR \"powershell.exe -NoProfile -ExecutionPolicy Bypass -File $WIN_KIT_DIR\\backup.ps1 run\" \
+         /SC DAILY /ST $SCHEDULE_TIME /RU SYSTEM /F" || {
         echo "  ERROR: failed to create scheduled task"
         return 1
     }
 
     echo "  Verifying..."
-    ssh "$host" "schtasks.exe /Query /TN \"BackupKit\"" || {
+    # /V /FO LIST so the logon mode is visible: it must NOT say "Interactive
+    # only", or the task is back to needing a logged-in user.
+    ssh "$host" "schtasks.exe /Query /TN \"BackupKit\" /V /FO LIST" \
+        | grep -Ei "Logon Mode|Run As User|Scheduled Task State" || {
         echo "  ERROR: task not found after install"
         return 1
     }
@@ -103,13 +112,15 @@ main() {
 
     echo "=== Scheduling backup on $host ==="
 
-    # Preflight: check that backup-kit is deployed
+    # Preflight: check that backup-kit is deployed. On Windows the check runs
+    # in cmd against the Windows filesystem — there is no shell on that side of
+    # the SSH connection that understands `test -x`.
     if [[ "$is_wsl" == "1" ]]; then
-        remote_exec "$host" "1" "test -x $REMOTE_KIT_DIR/backup.sh" || {
-            echo "ERROR: backup-kit not deployed on $host. Run deploy.sh first." >&2
+        ssh "$host" "if exist $WIN_KIT_DIR\\backup.ps1 (exit 0) else (exit 1)" || {
+            echo "ERROR: backup.ps1 not deployed on $host ($WIN_KIT_DIR). Run deploy.sh first." >&2
             exit 1
         }
-        schedule_wsl "$host" "$win_user"
+        schedule_windows "$host"
     else
         remote_exec "$host" "0" "test -x $REMOTE_KIT_DIR/backup.sh" || {
             echo "ERROR: backup-kit not deployed on $host. Run deploy.sh first." >&2
