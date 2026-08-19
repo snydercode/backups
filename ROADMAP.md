@@ -320,3 +320,19 @@ from that cwd).
       **Why it's an issue:** it states the report emails "per-run verdicts, days
       with no run, latest fleet snapshot"; all three sections are gone.
       **Proposed fix:** update the note when the blocking fixes land.
+- [ ] **"scheduler dead" is an inference the check never verified** — `bin/report.sh:109`, `:151`, `lib/gate.sh:120-137`
+      **Why it's an issue:** STALE_IDLE/STALE_RUN are derived from
+      `last_run.age_hours` plus per-job pending counters. Nothing in the check
+      queries cron or Task Scheduler, yet both report strings assert the
+      scheduler is dead. Verified live 2026-08-19: on ephys3 and ephys7 the
+      `BackupKit` task is registered, Enabled, `Last Result 0`, `Next Run Time
+      8/20/2026 1:00 AM` — `Get-ScheduledTaskInfo` reports
+      `NumberOfMissedRuns` 7 and 36. The scheduler is healthy; the task is
+      `/IT` (`Logon Mode: Interactive only`) and no one is logged in at 1 AM
+      (`quser` → "No User exists"), so Windows skips the run. The STALE_RUN
+      action, `bash bin/schedule.sh <host>`, would recreate the identical
+      interactive-only task and change nothing.
+      **Proposed fix:** say what was measured ("no successful run in Nh") and
+      leave the cause out; or teach the WSL branch of the check to read
+      `NumberOfMissedRuns` and report the real cause. See also the
+      interactive-token constraint in `CLAUDE.md` § Scheduling.
