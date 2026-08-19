@@ -375,3 +375,217 @@ from that cwd).
       leave the cause out; or teach the WSL branch of the check to read
       `NumberOfMissedRuns` and report the real cause. See also the
       interactive-token constraint in `CLAUDE.md` § Scheduling.
+
+## Review findings — Windows-native backup runtime (2026-08-19)
+
+**Context:** `/merge to main` on `feat/windows-native-backup` (12 commits: `backup.ps1`,
+the deploy/schedule/status/remote wiring, and a merge of `feat/readable-report`). Reviewers:
+`@skeptic`, `@spartan`, `@side-effect-tracer`, `@code-reviewer`, `@fact-checker`. ephys7 was
+already cut over and hand-fired before the review ran; ephys3 is still on WSL. Six raw
+findings were dropped as unverified — see "Refuted during verification" at the end.
+
+### Before merge
+
+- [ ] **Native status applies no date cutoff, so the two runtimes disagree on "pending"** — `backup.ps1:245-249` vs `backup.sh:262`
+      **Why it's an issue:** `backup.sh status` with no `--before` still computes a cutoff of
+      today's local midnight and passes it to rsync, so files written today are excluded from
+      `pending_files` by design. `Get-StatusJson` leaves `$minAgeDate` empty unless `-Before`
+      is passed, so today's files count. On a recording day a Windows host reports PENDING
+      where a Linux host reports OK, and because `lib/gate.sh:121-128` requires every job OK
+      with both counters at zero, a native host that is also stale can never reach the
+      informational STALE_IDLE — it goes to STALE_RUN, which `GATE_ACKABLE_CODES` makes
+      un-ackable.
+      **Proposed fix:** default `$minAgeDate` to today (`(Get-Date).ToString('yyyyMMdd')`)
+      when `-Before` is absent, matching `backup.sh`'s `${before_date:-$(date +%Y-%m-%d)}`.
+
+- [ ] **A throw inside `Invoke-Run` leaves the previous run's success on record** — `backup.ps1:398-499`
+      **Why it's an issue:** `$ErrorActionPreference = 'Stop'` is global and `Invoke-Run` has
+      no `try`/`finally`. `$_.IsReadOnly = $true` carries no error suppression, so one file
+      held open by an acquisition process unwinds past `Write-LastRun`. `last-run.txt` then
+      still holds the last success: the gate reads `result=0` at an age under 30h and the
+      failed run is invisible for a day. `backup.sh:180-184` writes the result
+      unconditionally, so this is a fail-open regression against the runtime it mirrors.
+      **Proposed fix:** wrap `Invoke-Run`'s body in `try`/`finally` and write `last-run.txt`
+      from the `finally`, recording a non-zero result when the body threw.
+
+- [ ] **`Get-PendingWork`'s `2>&1` turns any robocopy stderr into a terminating error** — `backup.ps1:139`
+      **Why it's an issue:** verified empirically on ephys7 — under
+      `$ErrorActionPreference = 'Stop'`, `& cmd.exe ... 2>&1 | Out-String` throws rather than
+      returning, so the `if ($rc -ge 8)` branch below is unreachable for any robocopy failure
+      that writes to stderr. The per-destination `JOB_ERROR` this function exists to produce
+      is replaced by a whole-host `STATUS_ERROR` with no indication of which destination
+      broke. (The copy path in `Invoke-Run` does not redirect, so it is unaffected.)
+      **Proposed fix:** drop the `2>&1` and read `$LASTEXITCODE`, or set
+      `$ErrorActionPreference = 'Continue'` around the invocation only.
+
+- [ ] **`Test-DestVolume` checks the drive letter, not the destination directory** — `backup.ps1:190-195`
+      **Why it's an issue:** `backup.sh`'s `check_mount` requires `[ -d "$path" ]` on the full
+      destination and dies otherwise. The native version only tests that `E:\` exists. A disk
+      replaced or reformatted comes back as a valid empty `E:`, so `plan` lists the entire
+      source as pending, `run` creates `E:\data` and starts a fresh full copy, and the host
+      reports PENDING then OK. Nothing distinguishes "the backup is gone" from "a big night
+      of new data".
+      **Proposed fix:** add `Test-Path -LiteralPath $DestWin -PathType Container` alongside
+      the volume-root test, and return ERROR when the destination directory is absent.
+
+- [ ] **Deploy alone flips status reporting, before anything schedules the native runtime** — `bin/deploy.sh:170`, `bin/status.sh:161`
+      **Why it's an issue:** `bin/deploy.sh` installs `backup.ps1` on every Windows host, and
+      `bin/status.sh` switches its source the instant the file exists — but `bin/schedule.sh`
+      is a separate manual step. A routine `bash bin/deploy-all.sh` would therefore point
+      ephys3's *reporting* at the native runtime while the WSL `/IT` task is still doing the
+      *backups*, which write a different state file. The seeded `last-run.txt` never updates,
+      age passes 30h, and the host emits an un-ackable nightly STALE_RUN while backing up
+      correctly. `deploy_seed_native_state` refuses to re-seed, so the wrong answer is sticky.
+      **Proposed fix:** have `remote_has_native_windows` read the `BackupKit` task's `/TR`
+      string rather than testing for the file — that is the fact status actually depends on.
+      Alternative: make deploy install the task too, so presence and scheduling cannot diverge.
+
+- [ ] **The advertised rollback does not roll back the schedule** — `lib/remote.sh:31-33`
+      **Why it's an issue:** the comment states rollback is "deleting one file on one host".
+      Deleting `C:\backup-kit\backup.ps1` makes status fall back to WSL, but the SYSTEM task
+      still points at the deleted file and fails nightly, and `schedule_wsl()` was removed in
+      dcbbee2 so no code path restores the old task. The result is no backups plus a status
+      that reads as merely stale. This claim was also repeated to the user in chat and in the
+      Todoist follow-up task.
+      **Proposed fix:** cut the sentence back to what stays true — status falls back to the
+      WSL runtime — and state that the scheduled task must be reinstalled separately.
+
+- [ ] **Two false claims in `backup.ps1` comments** — `backup.ps1:13`, `:89`
+      **Why it's an issue:** ":89 says `D:\data` "holds millions of files"; the only measurement
+      anywhere says 449 (ephys7, 2026-08-19), and ephys3 is unmeasured. `:13` says the output
+      "must be byte-compatible with `backup.sh status --raw`"; field names, order and types do
+      match, but `pending_human` uses `numfmt --to=iec-i` (`1.4GiB`) against `Format-Iec`
+      (`1.4GB`), and `dest_avail_human` is computed from `avail_kb * 1000` in `backup.sh:373`
+      against true bytes here. The measured byte-identical result on ephys3 held because both
+      strings happened to round the same way, not by construction.
+      **Proposed fix:** delete the "millions of files" clause rather than replacing the number,
+      and narrow the header claim to what the consumers need — identical field names and types.
+
+- [ ] **CLAUDE.md is a machine-consumed input and is now wrong for cut-over hosts** — `CLAUDE.md:194-198`, `:214`, `:240-250`, `:273-298`, `:327`
+      **Why it's an issue:** `bin/check.sh` builds its FAIL-path triage prompt by telling Claude
+      to follow CLAUDE.md's "Diagnostic triage" checklist and to wrap Windows commands in
+      `wsl.exe`. On ephys7 every Windows step now points at the wrong runtime: the log is
+      `C:\ProgramData\backup-kit\last-run.log`, the process is `powershell.exe` outside WSL,
+      and the whole `/IT` scheduling section documents the doctrine this branch reverses.
+      **Proposed fix:** rewrite the Scheduling, Diagnostic triage, File Locations, Safe and
+      Mutating Commands, and Rsync Policy sections for a two-runtime fleet, in the same pass
+      as the two stale `.opencode/` copies.
+
+- [ ] **`bin/ssh-ro.sh` cannot read native Windows state** — `bin/ssh-ro.sh:27-30`
+      **Why it's an issue:** the read-only channel the triage agent is given allows
+      `cat|tail|head|ls|stat|df|mountpoint`, `crontab -l`, `schtasks.exe /Query`, and a
+      `wsl.exe -e bash -lc` wrap. None of those reach `C:\ProgramData\backup-kit\last-run.log`
+      on a cut-over host — `cat` does not exist in the cmd.exe shell on that side of the SSH
+      connection. Triage step 2, "read the log", is unreachable for exactly the hosts this
+      branch changes.
+      **Proposed fix:** allow `type <path>` and `dir` on a Windows host, or route Windows reads
+      through a narrowly-shaped `powershell.exe -NoProfile -Command "Get-Content <path>"`.
+
+### Deferred
+
+- [ ] **`windows_user` is dead but still gates scheduling** — `bin/schedule.sh:100-107`
+      **Why it's an issue:** `schedule_windows()` no longer takes it, yet a missing value is
+      still a hard exit, and the field stays frozen into `jobs.txt`, `render-jobs-from-fleet.py`,
+      the upstream fleet schema, and CLAUDE.md's documented host block.
+      **Proposed fix:** drop the check; decide separately whether the field is retired upstream.
+
+- [ ] **`bin/schedule-all.sh` tells the operator to run the WSL runtime by hand** — `bin/schedule-all.sh:36`
+      **Why it's an issue:** on a cut-over host that command writes the WSL state file, which
+      nothing reads any more, so the manual run appears to have had no effect.
+      **Proposed fix:** print the per-OS command.
+
+- [ ] **`bin/deploy.sh` hardcodes the Windows paths the branch just centralized** — `bin/deploy.sh:51`, `:171-172`
+      **Why it's an issue:** literal `C:/backup-kit/...` scp targets sit in the same functions
+      that test those locations through `$WIN_KIT_DIR`/`$WIN_STATE_DIR`. Changing the variable
+      moves the probe and the task but not the deploy target, presenting as "deployed
+      successfully, status says not deployed".
+      **Proposed fix:** derive the scp targets from the variables.
+
+- [ ] **No gate fixture or test covers the native payload** — `test/fixtures/healthy.json`, `test/gate-test.sh`
+      **Why it's an issue:** the only fixture is a `backup.sh` capture. Every prior change to a
+      status producer shipped with a gate test; `make test` proves nothing about `backup.ps1`.
+      **Proposed fix:** commit a real `backup.ps1 status` capture as a second fixture and run
+      the gate over it.
+
+- [ ] **The schedule verification matches the label, not the value** — `bin/schedule.sh:88-90`
+      **Why it's an issue:** `grep -Ei "Logon Mode|..."` passes whether the mode is
+      "Interactive/Background" or "Interactive only" — the exact condition that cost ephys7 its
+      backups. It is also locale-fragile in the other direction: non-English labels fail the
+      grep and report a correctly installed task as missing.
+      **Proposed fix:** assert the value, and fire the task once at install time
+      (`schtasks /Run` plus a `Last Result` check) so a SYSTEM-context failure surfaces
+      immediately rather than 30 hours later.
+
+- [ ] **Robocopy summary parse fails open** — `backup.ps1:150-160`
+      **Why it's an issue:** `$files`/`$bytes` stay at zero when the regexes miss — a non-English
+      locale, or a byte count wide enough to run the Total and Copied columns together — and
+      the job then reports OK with nothing pending. That is the same fail-open the ROADMAP
+      already files against `run_plan_one`, one layer down.
+      **Proposed fix:** treat a non-zero `$rc -band 1` with a parsed zero count as an error;
+      the contradiction is directly detectable.
+
+- [ ] **`deploy_seed_native_state` writes a fixed path in `/tmp`** — `bin/deploy.sh:41`, `:48-50`
+      **Why it's an issue:** `/tmp/last-run.seed` follows a pre-existing symlink and collides
+      between concurrent deploys. The surrounding code already uses `mktemp` with a trap.
+      **Proposed fix:** `mktemp` inside the function; take a directory rather than deriving one
+      from the jobs file's name.
+
+- [ ] **Source tree is walked once per job, and per status call** — `backup.ps1:90-105`, `:280`
+      **Why it's an issue:** both ephys3 jobs share `/mnt/d/data`, so `Get-LastFileEpoch` walks
+      it twice per check, and `Get-ChildItem -Recurse` is materially slower than the
+      `find -printf` the Linux path uses. `bin/check.sh:45` caps the whole serial 5-host
+      collection at 600s, so a slow Windows host takes down the entire daily check with
+      `RUNNER_FAILURE`. Measured today: 1.4s on ephys3, ~15s on ephys7 — comfortable, but
+      unbounded as the trees grow.
+      **Proposed fix:** memoize on `$srcWin` within one status call.
+
+- [ ] **The human-readable host name changes for Windows hosts** — `backup.ps1:346`
+      **Why it's an issue:** `$env:COMPUTERNAME.ToLower()` against `hostname` inside WSL. The
+      gate, check and report all key on `.fleet_host` and are safe, but `bin/status.sh`'s human
+      renderer prints `.host`, so `make status` shows a different name for the same machine
+      mid-fleet.
+      **Proposed fix:** decide whether the runtime should report the fleet-facing name.
+
+- [ ] **`C:\backup-kit` is written by an unprivileged account and executed by SYSTEM** — `bin/deploy.sh:170-172`
+      **Why it's an issue:** the deploy account creates and populates the directory over SSH,
+      and the scheduled task runs it as SYSTEM with `-ExecutionPolicy Bypass`. If that account
+      is not a local administrator, this is a local privilege escalation path.
+      **Proposed fix:** deploy the runtime into `C:\ProgramData\backup-kit`, which the branch
+      already uses for state and which has tighter default ACLs.
+
+- [ ] **`bin/report.sh` carries compatibility code for a findings format that expired** — `bin/report.sh:93-96`, `:101-104`, `:230-234`
+      **Why it's an issue:** the 4-field findings format has not been written since 2026-08-06
+      and the report window is 7 days, so it can never re-enter. The branch is carried in
+      `dedup_findings`'s awk and re-implemented in `action_desc`, and the DISK_LOW parser
+      strips a legacy paren suffix `lib/gate.sh` no longer emits.
+      **Proposed fix:** delete the legacy branches.
+
+- [ ] **Three copies of the cmd `if exist` idiom, and a script-scope exit code that need not exist** — `lib/remote.sh:38`, `bin/schedule.sh:116`, `bin/deploy.sh:43`; `backup.ps1:51-53`, `:498`
+      **Why it's an issue:** `schedule.sh` sources `lib/remote.sh` and then inlines a
+      byte-identical copy of `remote_has_native_windows`; `deploy.sh` spells it a third time.
+      Separately, `$script:RunExitCode` plus its six-line comment exist only because
+      `Invoke-Run` is called as an expression; `exit $worst` at the end of the function
+      terminates the script directly and deletes all three pieces.
+      **Proposed fix:** one `remote_win_exists <host> <path>` helper; drop the script-scope
+      variable.
+
+### Refuted during verification
+
+Six raw findings did not survive and were not filed:
+
+1. "The first native run rewrites the read-only attribute on every destination file, untimed,
+   inside the 01:00 window." Measured 2026-08-19: ephys7 `E:\data` 10,192 of 10,192 files
+   already read-only; ephys3 `E:\data` 14,536 of 14,536 and `F:\data` 14,454 of 14,454. The
+   pass short-circuits on every file. It also means CLAUDE.md's claim that `chmod 444` does
+   not persist on these volumes is contradicted by the volumes themselves.
+2. "WSL-era `.rsync-partial` partials get frozen read-only." No such directory exists under
+   ephys7's `E:\data`.
+3. "PowerShell 5.1 may serialize a one-element `jobs` array as a bare object." ephys7 has
+   exactly one job and emitted `"jobs":[{...}]`.
+4. "The payload may carry a BOM or UTF-16 that `jq -e .` rejects." `bin/status.sh` parsed
+   ephys7's native payload today.
+5. "The byte-identical ephys3 result is unverifiable and in tension with the code." The
+   measurement ran and returned identical; the tension is real but is about fragility, and is
+   filed above as the header-claim finding instead.
+6. "The merge commit's reference to a report email tomorrow is wrong because the report cron
+   is Mondays." A one-off `at` job was queued for 08:35 tomorrow; the reviewer could not see it.
