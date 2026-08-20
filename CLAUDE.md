@@ -22,9 +22,10 @@ Windows" and no longer describes how the backup runs; paths stay in WSL form
 (`/mnt/d/data`) because the fleet renderer emits them that way, and `backup.ps1`
 translates them.
 
-Cutover status: **ephys7 native since 2026-08-19; ephys3 still on the WSL runtime.**
-Every script picks the runtime per host by asking the host, so a mixed fleet is a
-supported state — see `remote_has_native_windows` in `lib/remote.sh`.
+Cutover status: **both Windows hosts are native — ephys7 since 2026-08-19, ephys3
+since 2026-08-20.** No host runs the WSL runtime any more. Every script still picks
+the runtime per host by asking the host, so a mixed fleet stays a supported state —
+see `remote_has_native_windows` in `lib/remote.sh`.
 
 **Note**: setup7's old `/ganymede` and `/callisto` mount points have been renamed to `/phobos` and `/deimos`.
 
@@ -131,7 +132,6 @@ bash bin/status.sh ephys7
 # Same, by hand
 ssh setup7 '~/backup-kit/backup.sh status'
 ssh ephys7 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\backup-kit\backup.ps1 status'
-ssh ephys3 'wsl.exe -e bash -lc "~/backup-kit/backup.sh status"'   # still WSL
 
 # Preview pending changes (dry-run)
 ssh setup3 '~/backup-kit/backup.sh plan'
@@ -393,9 +393,10 @@ constraint that forced `/IT`.
 `windows_user` in `jobs.txt` is a leftover of that arrangement. The native task does
 not use it.
 
-### Windows (legacy, WSL) — ephys3 until it is cut over
+### Windows (legacy, WSL) — rollback only
 
-The `/RU` account differs per host — it is `windows_user` in `jobs.txt`, and using
+No host runs this any more. It is kept because rollback reinstalls it, and because
+the `/RU` account differs per host — it is `windows_user` in `jobs.txt`, and using
 the wrong one silently installs a task that can never run:
 
 ```bash
@@ -414,8 +415,9 @@ Cutting a host over is two commands, and the order matters — status follows th
 scheduled task, so the host keeps reporting from WSL until the task changes:
 
 ```bash
-bash bin/deploy.sh ephys3      # puts backup.ps1 on C:\, seeds the native state file
-bash bin/schedule.sh ephys3    # replaces the task; this is the cutover
+bash bin/deploy.sh <host>      # puts backup.ps1 on C:\
+bash bin/schedule.sh <host>    # seeds the native state file, then replaces the
+                               # task; this second step is the cutover
 ```
 
 Rolling back is the same two steps in reverse: reinstall the WSL task with the
