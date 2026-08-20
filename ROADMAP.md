@@ -386,6 +386,10 @@ findings were dropped as unverified — see "Refuted during verification" at the
 
 ### Before merge
 
+> **All nine were fixed in `3157ca8` and merged in `35c54fb`; the checkboxes below
+> were never ticked.** The commit body enumerates the nine one for one. Verify
+> against the code before re-opening any of them — none is believed outstanding.
+
 - [ ] **Native status applies no date cutoff, so the two runtimes disagree on "pending"** — `backup.ps1:245-249` vs `backup.sh:262`
       **Why it's an issue:** `backup.sh status` with no `--before` still computes a cutoff of
       today's local midnight and passes it to rsync, so files written today are excluded from
@@ -605,6 +609,9 @@ and reverts on return; `Test-DestVolume` is right for every path form
 `ConvertTo-WindowsPath` emits; and the widened allowlist admits no write or execute.
 
 ### Before merge
+
+> **All five were fixed in `c50d872` and merged in `35c54fb`; the checkboxes below
+> were never ticked.** Same caveat as the round-1 section above.
 
 - [ ] **A robocopy that fails to launch now reports OK with nothing pending** — `backup.ps1:139-147`
       **Why it's an issue:** self-inflicted by the `ErrorActionPreference = 'Continue'`
