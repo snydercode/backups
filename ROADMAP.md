@@ -144,19 +144,29 @@ fleet capture; jq null-concatenation triggers ruled out — null is identity for
       3-process-per-host jq pipeline; help text inlined instead of the house
       `usage()` idiom; `send_email`'s unused return scaffolding.
       **Proposed fix:** apply as one cleanup pass alongside the ack-schema change.
-- [ ] **Only ephys7 is cut over to the native Windows runtime** — `backup.ps1`, `bin/deploy.sh`, `bin/schedule.sh`
+- [x] **Only ephys7 is cut over to the native Windows runtime** — `backup.ps1`, `bin/deploy.sh`, `bin/schedule.sh`
       **Why it's an issue:** ephys7 switched 2026-08-19 — backup.ps1 deployed to
       `C:\backup-kit`, `last-run.txt` seeded from the WSL state, and a SYSTEM
       task (Logon Mode: Interactive/Background) installed and test-fired by hand:
-      exit 0, 449 files scanned, nothing pending. ephys3 is deliberately still on
-      the WSL runtime as a control for one night. Until it moves, the fleet runs
-      two runtimes and `bin/status.sh` pays a probe round trip per Windows host
-      to tell them apart.
-      **Proposed fix:** once ephys7 proves an unattended 01:00 run, do
-      `bash bin/deploy.sh ephys3 && bash bin/schedule.sh ephys3`. After both
-      hosts are native and stable, consider dropping the WSL deployment from
-      `bin/deploy.sh` and the probe from `bin/status.sh` — but keeping them is
-      what makes a per-host rollback a single file deletion.
+      exit 0, 449 files scanned, nothing pending. ephys3 stayed on the WSL
+      runtime as a control for one night. Until it moved, the fleet ran two
+      runtimes and `bin/status.sh` paid a probe round trip per Windows host to
+      tell them apart.
+      **Fix applied (2026-08-20, 4a6c9ce):** ephys3 cut over with
+      `bash bin/deploy.sh ephys3 && bash bin/schedule.sh ephys3`. The control
+      night answered the question the hard way — ephys3's `/RU admin /IT` task had
+      not fired since 2026-08-12 because nobody logged in as `admin`, the same
+      failure that cost ephys7 36 runs. The native task reads
+      Interactive/Background as SYSTEM, and a hand-fired run finished with result
+      0: 607 files already present, nothing copied. Both Windows hosts are native.
+- [ ] **The WSL runtime is still deployed and probed for on hosts that no longer use it** — `bin/deploy.sh`, `bin/status.sh`, `lib/remote.sh`
+      **Why it's an issue:** both Windows hosts went native on 2026-08-20, so every
+      deploy still pushes `backup.sh` and a WSL `jobs.txt` that nothing runs, and
+      every status call pays a `schtasks` probe round trip to learn an answer that
+      is now the same for both hosts.
+      **Proposed fix:** decide whether rollback is still worth its carrying cost.
+      Keeping it is what makes a per-host rollback cheap; dropping it deletes the
+      probe, the dual deploy path, and the `os=wsl` ambiguity in one pass.
 - [ ] **backup.sh records only the last job's result in last-run.txt** — `backup.sh:180`
       **Why it's an issue:** `run_backup_one` writes the result file at the end
       of every job, so on a two-destination host the second job's exit code
@@ -198,7 +208,10 @@ from that cwd).
 
 ### Before merge
 
-- [ ] **Window union resurrects superseded findings into the subject line** — `bin/report.sh:208-257`
+> Fixed in `a6d766c` and merged via `647c7ac`; the commit body enumerates
+> the six one for one.
+
+- [x] **Window union resurrects superseded findings into the subject line** — `bin/report.sh:208-257`
       **Why it's an issue:** actions and the subject are computed from the union
       of all findings in the 7-day window, with no supersession. All five checks
       2026-08-07..10 produced zero FAIL lines, yet the live report reads
@@ -214,7 +227,7 @@ from that cwd).
       dir only; render the rest of the window as a separate unnumbered
       `ALSO SEEN THIS WEEK` block. Scoping change to the day loop, not a rewrite.
 
-- [ ] **Unreadable `findings.tsv` reports as all-clear** — `bin/report.sh:220-229`
+- [x] **Unreadable `findings.tsv` reports as all-clear** — `bin/report.sh:220-229`
       **Why it's an issue:** the guard is `[[ ! -e ]]`; `grep -q` returns 2 on a
       read error without incrementing `failed_runs`, and the read loop fails
       silently. Verified: the identical file yields `Backups: 1 thing needs you
@@ -225,7 +238,7 @@ from that cwd).
       synthetic INCOMPLETE_RUN finding. (`-s` is safe: `bin/check.sh:129` writes
       `printf '%s\n'`, so a genuinely clean run is 1 byte, not 0.)
 
-- [ ] **The missed-checks action is always the first item truncated** — `bin/report.sh:289-298`
+- [x] **The missed-checks action is always the first item truncated** — `bin/report.sh:289-298`
       **Why it's an issue:** it is appended after the dedup loop so it always
       gets the highest number, and `MAX_ACTIONS=5` cuts it. Happening live today:
       `No check ran on 2026-08-04, 2026-08-05` is the item hidden behind
@@ -233,7 +246,7 @@ from that cwd).
       finding and is the one thing the report suppresses.
       **Proposed fix:** emit it as action 1 unconditionally, exempt from the cap.
 
-- [ ] **Host-less findings produce `bash bin/deploy.sh -`** — `bin/report.sh:115`, `:222`, `:262`
+- [x] **Host-less findings produce `bash bin/deploy.sh -`** — `bin/report.sh:115`, `:222`, `:262`
       **Why it's an issue:** `lib/gate.sh:60` (CONFIG_MISMATCH), `bin/check.sh:124`
       (RUNNER_FAILURE) and report.sh's own INCOMPLETE_RUN all emit `-` as the
       host. `action_desc` then hands the reader a copy-pasteable invocation of a
@@ -244,7 +257,7 @@ from that cwd).
       **Proposed fix:** suppress ACTION_CMD when host is `-`, give the three
       codes fleet-level wording, and exclude `-` from `failing_hosts`.
 
-- [ ] **Model reply is bounded by line count, not bytes** — `bin/report.sh:178-186`
+- [x] **Model reply is bounded by line count, not bytes** — `bin/report.sh:178-186`
       **Why it's an issue:** `head -n 3` caps lines; the "under 120 characters"
       instruction is prompt-level only. A 40KB single-line reply passes the
       filter and `fold -s -w 72` expands it to ~555 lines. Since 91366da the
@@ -253,7 +266,7 @@ from that cwd).
       **Proposed fix:** `cut -c1-200` per line and an overall `head -c 2000`
       before folding.
 
-- [ ] **Three false claims in the script's own docs** — `bin/report.sh:9-11`, `:16`, `:32`
+- [x] **Three false claims in the script's own docs** — `bin/report.sh:9-11`, `:16`, `:32`
       **Why it's an issue:** `--help` advertises `--no-context   skip the
       Claude-written CONTEXT section`, but 91366da renamed the emitted heading to
       SUMMARY and left the flag name, all four `CONTEXT_*` constants,
@@ -386,11 +399,10 @@ findings were dropped as unverified — see "Refuted during verification" at the
 
 ### Before merge
 
-> **All nine were fixed in `3157ca8` and merged in `35c54fb`; the checkboxes below
-> were never ticked.** The commit body enumerates the nine one for one. Verify
-> against the code before re-opening any of them — none is believed outstanding.
+> Fixed in `3157ca8` and merged in `35c54fb`; the commit body enumerates
+> the nine one for one.
 
-- [ ] **Native status applies no date cutoff, so the two runtimes disagree on "pending"** — `backup.ps1:245-249` vs `backup.sh:262`
+- [x] **Native status applies no date cutoff, so the two runtimes disagree on "pending"** — `backup.ps1:245-249` vs `backup.sh:262`
       **Why it's an issue:** `backup.sh status` with no `--before` still computes a cutoff of
       today's local midnight and passes it to rsync, so files written today are excluded from
       `pending_files` by design. `Get-StatusJson` leaves `$minAgeDate` empty unless `-Before`
@@ -402,7 +414,7 @@ findings were dropped as unverified — see "Refuted during verification" at the
       **Proposed fix:** default `$minAgeDate` to today (`(Get-Date).ToString('yyyyMMdd')`)
       when `-Before` is absent, matching `backup.sh`'s `${before_date:-$(date +%Y-%m-%d)}`.
 
-- [ ] **A throw inside `Invoke-Run` leaves the previous run's success on record** — `backup.ps1:398-499`
+- [x] **A throw inside `Invoke-Run` leaves the previous run's success on record** — `backup.ps1:398-499`
       **Why it's an issue:** `$ErrorActionPreference = 'Stop'` is global and `Invoke-Run` has
       no `try`/`finally`. `$_.IsReadOnly = $true` carries no error suppression, so one file
       held open by an acquisition process unwinds past `Write-LastRun`. `last-run.txt` then
@@ -412,7 +424,7 @@ findings were dropped as unverified — see "Refuted during verification" at the
       **Proposed fix:** wrap `Invoke-Run`'s body in `try`/`finally` and write `last-run.txt`
       from the `finally`, recording a non-zero result when the body threw.
 
-- [ ] **`Get-PendingWork`'s `2>&1` turns any robocopy stderr into a terminating error** — `backup.ps1:139`
+- [x] **`Get-PendingWork`'s `2>&1` turns any robocopy stderr into a terminating error** — `backup.ps1:139`
       **Why it's an issue:** verified empirically on ephys7 — under
       `$ErrorActionPreference = 'Stop'`, `& cmd.exe ... 2>&1 | Out-String` throws rather than
       returning, so the `if ($rc -ge 8)` branch below is unreachable for any robocopy failure
@@ -422,7 +434,7 @@ findings were dropped as unverified — see "Refuted during verification" at the
       **Proposed fix:** drop the `2>&1` and read `$LASTEXITCODE`, or set
       `$ErrorActionPreference = 'Continue'` around the invocation only.
 
-- [ ] **`Test-DestVolume` checks the drive letter, not the destination directory** — `backup.ps1:190-195`
+- [x] **`Test-DestVolume` checks the drive letter, not the destination directory** — `backup.ps1:190-195`
       **Why it's an issue:** `backup.sh`'s `check_mount` requires `[ -d "$path" ]` on the full
       destination and dies otherwise. The native version only tests that `E:\` exists. A disk
       replaced or reformatted comes back as a valid empty `E:`, so `plan` lists the entire
@@ -432,7 +444,7 @@ findings were dropped as unverified — see "Refuted during verification" at the
       **Proposed fix:** add `Test-Path -LiteralPath $DestWin -PathType Container` alongside
       the volume-root test, and return ERROR when the destination directory is absent.
 
-- [ ] **Deploy alone flips status reporting, before anything schedules the native runtime** — `bin/deploy.sh:170`, `bin/status.sh:161`
+- [x] **Deploy alone flips status reporting, before anything schedules the native runtime** — `bin/deploy.sh:170`, `bin/status.sh:161`
       **Why it's an issue:** `bin/deploy.sh` installs `backup.ps1` on every Windows host, and
       `bin/status.sh` switches its source the instant the file exists — but `bin/schedule.sh`
       is a separate manual step. A routine `bash bin/deploy-all.sh` would therefore point
@@ -444,7 +456,7 @@ findings were dropped as unverified — see "Refuted during verification" at the
       string rather than testing for the file — that is the fact status actually depends on.
       Alternative: make deploy install the task too, so presence and scheduling cannot diverge.
 
-- [ ] **The advertised rollback does not roll back the schedule** — `lib/remote.sh:31-33`
+- [x] **The advertised rollback does not roll back the schedule** — `lib/remote.sh:31-33`
       **Why it's an issue:** the comment states rollback is "deleting one file on one host".
       Deleting `C:\backup-kit\backup.ps1` makes status fall back to WSL, but the SYSTEM task
       still points at the deleted file and fails nightly, and `schedule_wsl()` was removed in
@@ -454,7 +466,7 @@ findings were dropped as unverified — see "Refuted during verification" at the
       **Proposed fix:** cut the sentence back to what stays true — status falls back to the
       WSL runtime — and state that the scheduled task must be reinstalled separately.
 
-- [ ] **Two false claims in `backup.ps1` comments** — `backup.ps1:13`, `:89`
+- [x] **Two false claims in `backup.ps1` comments** — `backup.ps1:13`, `:89`
       **Why it's an issue:** ":89 says `D:\data` "holds millions of files"; the only measurement
       anywhere says 449 (ephys7, 2026-08-19), and ephys3 is unmeasured. `:13` says the output
       "must be byte-compatible with `backup.sh status --raw`"; field names, order and types do
@@ -465,7 +477,7 @@ findings were dropped as unverified — see "Refuted during verification" at the
       **Proposed fix:** delete the "millions of files" clause rather than replacing the number,
       and narrow the header claim to what the consumers need — identical field names and types.
 
-- [ ] **CLAUDE.md is a machine-consumed input and is now wrong for cut-over hosts** — `CLAUDE.md:194-198`, `:214`, `:240-250`, `:273-298`, `:327`
+- [x] **CLAUDE.md is a machine-consumed input and is now wrong for cut-over hosts** — `CLAUDE.md:194-198`, `:214`, `:240-250`, `:273-298`, `:327`
       **Why it's an issue:** `bin/check.sh` builds its FAIL-path triage prompt by telling Claude
       to follow CLAUDE.md's "Diagnostic triage" checklist and to wrap Windows commands in
       `wsl.exe`. On ephys7 every Windows step now points at the wrong runtime: the log is
@@ -475,7 +487,7 @@ findings were dropped as unverified — see "Refuted during verification" at the
       Mutating Commands, and Rsync Policy sections for a two-runtime fleet, in the same pass
       as the two stale `.opencode/` copies.
 
-- [ ] **`bin/ssh-ro.sh` cannot read native Windows state** — `bin/ssh-ro.sh:27-30`
+- [x] **`bin/ssh-ro.sh` cannot read native Windows state** — `bin/ssh-ro.sh:27-30`
       **Why it's an issue:** the read-only channel the triage agent is given allows
       `cat|tail|head|ls|stat|df|mountpoint`, `crontab -l`, `schtasks.exe /Query`, and a
       `wsl.exe -e bash -lc` wrap. None of those reach `C:\ProgramData\backup-kit\last-run.log`
@@ -610,10 +622,9 @@ and reverts on return; `Test-DestVolume` is right for every path form
 
 ### Before merge
 
-> **All five were fixed in `c50d872` and merged in `35c54fb`; the checkboxes below
-> were never ticked.** Same caveat as the round-1 section above.
+> Fixed in `c50d872` and merged in `35c54fb`.
 
-- [ ] **A robocopy that fails to launch now reports OK with nothing pending** — `backup.ps1:139-147`
+- [x] **A robocopy that fails to launch now reports OK with nothing pending** — `backup.ps1:139-147`
       **Why it's an issue:** self-inflicted by the `ErrorActionPreference = 'Continue'`
       fix. `$LASTEXITCODE` is never reset before `& robocopy.exe`, so if the binary
       cannot start — AppLocker or WDAC on a domain-managed box, AV block, a PATH
@@ -627,7 +638,7 @@ and reverts on return; `Test-DestVolume` is right for every path form
       and return `Ok = $false` when `$rc` is null or the output carries no
       `Files :` summary line.
 
-- [ ] **The runtime probe has no "unknown" answer** — `lib/remote.sh:38-44`, `bin/status.sh:160-161`
+- [x] **The runtime probe has no "unknown" answer** — `lib/remote.sh:38-44`, `bin/status.sh:160-161`
       **Why it's an issue:** self-inflicted by the probe fix. The function's return
       value is grep's exit status and ssh's stderr is discarded, so "this host runs
       WSL", "Task Scheduler RPC failed", "the task was renamed", and "the host key
@@ -643,7 +654,7 @@ and reverts on return; `Test-DestVolume` is right for every path form
       rather than querying the runtime that is not running. Hoist the task name into
       a `WIN_TASK_NAME` constant.
 
-- [ ] **The state seed is written at deploy time but first read at schedule time** — `bin/deploy.sh:33-58`
+- [x] **The state seed is written at deploy time but first read at schedule time** — `bin/deploy.sh:33-58`
       **Why it's an issue:** self-inflicted, and a direct consequence of moving the
       flip. `deploy_seed_native_state` copies the WSL `last-run.txt` once, at deploy,
       and refuses to overwrite. Before the probe fix, status flipped at that same
@@ -657,7 +668,7 @@ and reverts on return; `Test-DestVolume` is right for every path form
       **Proposed fix:** seed from `bin/schedule.sh`'s Windows branch, where the flip
       now happens, and allow the overwrite when the source file is newer.
 
-- [ ] **The triage doc and the triage channel disagree about what can be run** — `CLAUDE.md:249`, `:277`, `bin/check.sh:217-220`
+- [x] **The triage doc and the triage channel disagree about what can be run** — `CLAUDE.md:249`, `:277`, `bin/check.sh:217-220`
       **Why it's an issue:** self-inflicted by fixes 8 and 9 landing without being
       reconciled. CLAUDE.md's rewritten step 5 documents
       `Get-ScheduledTaskInfo -TaskName BackupKit | Select NumberOfMissedRuns`, whose
@@ -671,7 +682,7 @@ and reverts on return; `Test-DestVolume` is right for every path form
       update `bin/check.sh`'s enumeration; drop the allowlisted cmdlets that no
       documented step uses.
 
-- [ ] **The documented rollback names an account that does not exist on the only host worth rolling back** — `CLAUDE.md:398`, `bin/deploy.sh:167`
+- [x] **The documented rollback names an account that does not exist on the only host worth rolling back** — `CLAUDE.md:398`, `bin/deploy.sh:167`
       **Why it's an issue:** self-inflicted. The pre-rewrite doc carried per-host
       `schtasks /Create` variants — `/RU admin` for ephys3, `/RU Toor` for ephys7. The
       rewrite kept one and hardcoded `/RU admin`, and § Rollback points at it.
