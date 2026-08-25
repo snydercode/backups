@@ -200,6 +200,10 @@ fi
 codes="$(cut -f3 <<< "$fail_lines" | sort -u | paste -sd, -)"
 log "FAIL: $codes"
 
+# FIXME: line ~221 below has unescaped double quotes inside this assignment, so
+# the string terminates early, bash runs the remainder as a command, and
+# triage_prompt is never set. Escape them as \" (line 224 already does).
+# First hit 2026-08-25; introduced 2026-08-19 in c50d872.
 triage_prompt="You are the automated FAIL path of the daily backup health check on quintana.
 Working directory: $REPO_DIR (the backup-kit repo).
 
