@@ -85,6 +85,8 @@ build() {
         set -u
         REPO_DIR="/stub/repo"
         run_dir="/stub/run"
+        TRIAGE_MAX_LINES=4
+        TRIAGE_MAX_COLS=200
         fail_lines=$'FAIL\tephys3\tSTATUS_ERROR\t-\tstub failure detail'
         info_lines="$1"
         eval "$block"
@@ -105,7 +107,7 @@ fi
 contains "keeps its opening line" "$prompt" \
     "You are the automated FAIL path of the daily backup health check"
 contains "keeps its closing line" "$prompt" \
-    "Fix. No preamble, no code fences."
+    "No markdown, no bullets, no headings, no preamble, no code fences."
 
 # The two lines that carry embedded quotes. They must reach the agent as real
 # quotes: bare in the PowerShell example, and bare inside the single-quoted
@@ -115,6 +117,16 @@ contains "PowerShell example keeps its quotes" "$prompt" \
 contains "WSL example keeps its quotes" "$prompt" \
     $'bash bin/ssh-ro.sh <host> \'wsl.exe -e bash -lc "<command>"\''
 lacks "no backslash-escaped quotes leak through" "$prompt" '\"'
+
+# The clamp is what keeps the email short. bin/check.sh also clamps the reply on
+# the way in, but a prompt that stopped asking for brevity would spend a full
+# triage run producing something that gets truncated mid-sentence.
+contains "interpolates the line clamp" "$prompt" "at most 4 lines of plain text"
+contains "interpolates the column clamp" "$prompt" "under 200 characters"
+contains "offers NONE when there is nothing to add" "$prompt" \
+    "reply with exactly: NONE"
+contains "tells the agent the gate owns the verdict" "$prompt" \
+    "not from you"
 
 # Every value the prompt interpolates.
 contains "interpolates REPO_DIR" "$prompt" "/stub/repo (the backup-kit repo)"
@@ -127,7 +139,7 @@ contains "labels the informational block" "$prompt" \
 # With nothing informational the block must vanish, not render an empty header.
 bare="$(build "")"
 contains "still builds with no informational findings" "$bare" \
-    "Fix. No preamble, no code fences."
+    "No markdown, no bullets, no headings, no preamble, no code fences."
 lacks "omits the informational block when empty" "$bare" \
     "Also present, informational only"
 

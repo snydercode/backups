@@ -26,12 +26,13 @@ set -u
 PATH=/usr/local/bin:/usr/bin:/bin
 shopt -s nullglob
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+source "$REPO_DIR/lib/render.sh"
+
 readonly EMAIL_TO="charles.d.holmes@gmail.com"
 readonly EMAIL_BIN="$HOME/scripts/email"
 readonly STATE_DIR="$HOME/.local/state/backup-kit-check"
-
-# Actions shown before the fold, before "+N more". Five is the readable cap.
-readonly MAX_ACTIONS=5
 
 # Optional SUMMARY section. Runs only when there is at least one action, so
 # an all-clear week costs nothing and adds no failure mode. Every outcome
@@ -83,82 +84,6 @@ done
 # prose; what the reader needs at 08:30 on a Monday is the command to run.
 # Sets ACTION_CMD to the command to run, or empty when there isn't one.
 #
-# Fleet-level findings arrive with host "-" (lib/gate.sh CONFIG_MISMATCH,
-# bin/check.sh RUNNER_FAILURE, and INCOMPLETE_RUN below). Those must never
-# reach a per-host command: "bash bin/deploy.sh -" is a mutating invocation
-# handed to the reader as if it were the fix.
-ACTION_CMD=""
-action_desc() {
-    local host="$1" code="$2" key="$3" detail="$4"
-    # Legacy 4-field findings carry no key column; recover the destination
-    # from the detail prefix ("/phobos/data: 23GB free ...").
-    local dest="$key"
-    [[ "$dest" == "-" || -z "$dest" ]] && dest="${detail%%:*}"
-    ACTION_CMD=""
-    case "$code" in
-        DISK_LOW)
-            # Keep the size, drop the threshold rationale the gate appends
-            # after an em-dash (current format) or in parens (legacy).
-            local amount="${detail#*: }"
-            amount="${amount%% —*}"
-            amount="${amount%% (*}"
-            printf '%s — free up space on %s (%s)' "$host" "$dest" "$amount"
-            ;;
-        STALE_RUN)
-            ACTION_CMD="bash bin/schedule.sh $host"
-            printf '%s — scheduler dead AND data is waiting' "$host"
-            ;;
-        NEVER_RUN)
-            ACTION_CMD="bash bin/schedule.sh $host"
-            printf '%s — never backed up' "$host"
-            ;;
-        FAILED_RUN)
-            ACTION_CMD="ssh $host 'cat ~/.local/state/backup-kit/last-run.log'"
-            printf '%s — last backup exited non-zero' "$host"
-            ;;
-        DISCONNECTED)
-            # The detail is ssh's own reason. "Powered off" and "the name stopped
-            # resolving" and "the key was rejected" all land here, and they need
-            # different things done about them.
-            printf '%s — unreachable over SSH. Check it is powered on. (%s)' "$host" "$detail"
-            ;;
-        JOB_ERROR)
-            printf '%s — %s is not readable (mount gone?)' "$host" "$dest"
-            ;;
-        MISSING_HOST|MISSING_JOB|CONFIG_MISMATCH)
-            if [[ "$host" == "-" ]]; then
-                printf 'Fleet config drift — %s' "$detail"
-            else
-                ACTION_CMD="bash bin/deploy.sh $host"
-                printf '%s — config drift' "$host"
-            fi
-            ;;
-        RUNNER_FAILURE|INCOMPLETE_RUN)
-            printf 'The check itself broke — %s' "$detail"
-            ;;
-        *)
-            if [[ "$host" == "-" ]]; then
-                printf '%s: %s' "$code" "$detail"
-            else
-                printf '%s — %s: %s' "$host" "$code" "$detail"
-            fi
-            ;;
-    esac
-}
-
-# Informational findings get the same de-jargoning, one line each.
-known_desc() {
-    local host="$1" code="$2" detail="$3"
-    case "$code" in
-        STALE_IDLE)
-            printf '%s — scheduler dead (%s), nothing waiting. No data at risk.' \
-                "$host" "${detail%% (limit*}"
-            ;;
-        *)
-            printf '%s — %s' "$host" "$detail"
-            ;;
-    esac
-}
 
 # Ask Claude what the failing findings mean taken together. Prints the section
 # on success and nothing at all otherwise — every failure path here is a
@@ -197,31 +122,14 @@ $fleet"
     out="$(timeout "$SUMMARY_TIMEOUT" "$CLAUDE_BIN" -p "$prompt" \
         </dev/null 2>/dev/null)" || return 0
 
-    # Bound by BYTES, not just lines. head -n alone lets a single 40KB line
-    # through, and fold then expands it to hundreds of display lines sitting
-    # above the action list — burying the report this section annotates.
-    out="$(printf '%s' "$out" | grep -v '^[[:space:]]*$' \
-        | cut -c1-"$SUMMARY_MAX_COLS" | head -n "$SUMMARY_MAX_LINES" \
-        | head -c "$SUMMARY_MAX_BYTES")"
+    out="$(printf '%s' "$out" | render_clamp_note \
+        "$SUMMARY_MAX_LINES" "$SUMMARY_MAX_COLS" "$SUMMARY_MAX_BYTES")"
     [[ -z "$out" || "$out" == "NONE" ]] && return 0
 
     printf 'SUMMARY (written by Claude, not part of the verdict)\n'
-    # fold -s breaks on spaces and leaves them dangling at end of line.
-    printf '%s' "$out" | fold -s -w "$SUMMARY_WRAP" \
-        | sed -e 's/[[:space:]]*$//' -e 's/^/  /'
+    printf '%s' "$out" | render_wrap_note "$SUMMARY_WRAP"
 }
 
-# Render an hour count as the coarsest unit that still reads at a glance.
-humanize_age() {
-    local h="$1"
-    if [[ ! "$h" =~ ^[0-9]+$ ]]; then
-        printf 'unknown'
-    elif [[ "$h" -lt 48 ]]; then
-        printf '%sh ago' "$h"
-    else
-        printf '%sd ago' "$((h / 24))"
-    fi
-}
 
 # Collapse identical findings to one row: same status+host+code+key seen nine
 # times is one fact, not nine lines. Emits
@@ -297,25 +205,22 @@ window_dedup="$(dedup_findings <<< "$raw_findings")"
 # Keys the newest check still reports. Anything else in the window is history.
 current_keys="$(cut -f1-4 <<< "$current_dedup" | grep -v '^[[:space:]]*$')"
 
-items=()
 known=""
-failing_hosts=" "
 fail_tsv=""
 
 # A dead check pipeline outranks any single-host finding, and it is the item
-# the MAX_ACTIONS fold would otherwise drop. It goes first, always.
+# the fold would otherwise drop. It goes first, always. It is not a gate
+# finding, so it is synthesised into one — the renderer knows NO_CHECK.
+action_tsv=""
 if [[ "$missed" -gt 0 ]]; then
-    items+=("No check ran on $missed_days"$'\n'"       ssh quintana 'crontab -l | grep backup-kit'")
+    action_tsv+="-	NO_CHECK	-	$missed_days"$'\n'
 fi
 
 while IFS=$'\t' read -r st host code key cnt first last detail; do
     [[ -z "$st" ]] && continue
     case "$st" in
         FAIL)
-            [[ "$host" != "-" ]] && failing_hosts+="$host "
             fail_tsv+="$host	$code	$key	$detail"$'\n'
-            desc="$(action_desc "$host" "$code" "$key" "$detail")"
-            items+=("$desc${ACTION_CMD:+$'\n'"       $ACTION_CMD"}")
             ;;
         INFO|ACK)
             known+="  $(known_desc "$host" "$code" "$detail")"$'\n'
@@ -323,15 +228,10 @@ while IFS=$'\t' read -r st host code key cnt first last detail; do
     esac
 done <<< "$current_dedup"
 
-action_count=${#items[@]}
-actions=""
-for idx in "${!items[@]}"; do
-    [[ "$idx" -ge "$MAX_ACTIONS" ]] && break
-    actions+="$(printf '  %d. %s' "$((idx + 1))" "${items[idx]}")"$'\n'
-done
-if [[ "$action_count" -gt "$MAX_ACTIONS" ]]; then
-    actions+="  ... and $((action_count - MAX_ACTIONS)) more (see artifacts below)"$'\n'
-fi
+action_tsv+="$fail_tsv"
+action_count="$(render_action_count <<< "$action_tsv")"
+failing_hosts="$(render_failing_hosts <<< "$action_tsv")"
+actions="$(render_actions <<< "$action_tsv")"$'\n'
 
 # Findings from earlier in the window that the newest check no longer reports.
 # Listed, not numbered: they are context, not work.
@@ -348,50 +248,18 @@ while IFS=$'\t' read -r st host code key cnt first last detail; do
     also_seen+="$(printf '  %s (%s)' "$what" "$when")"$'\n'
 done <<< "$window_dedup"
 
-# Host table, worst first: anything with a failing finding sorts to the top so
-# the eye lands on it without reading the whole block.
-hosts_table="  (no fleet snapshot in the window)"
-if [[ -n "$latest_fleet" ]]; then
-    rows=""
-    while IFS=$'\t' read -r name age pending; do
-        [[ -z "$name" ]] && continue
-        mark=" "
-        sort_key=1
-        if [[ "$failing_hosts" == *" $name "* ]]; then
-            mark="!"
-            sort_key=0
-        fi
-        rows+="$(printf '%d\t%s %-8s %13s %9s' "$sort_key" "$mark" "$name" \
-            "$(humanize_age "$age")" "$pending")"$'\n'
-    done < <(jq -r '.hosts[]
-        | [ (.fleet_host // .host // "?"),
-            (.last_run.age_hours // "?" | tostring),
-            ([.jobs[]?.pending_files] | add // 0 | tostring) ]
-        | @tsv' "$latest_fleet" 2>/dev/null)
-    if [[ -n "$rows" ]]; then
-        # grep -v '^$' drops the empty trailing field the here-string adds;
-        # without it an empty line sorts to the top of the table.
-        hosts_table="$(grep -v '^$' <<< "$rows" | sort -k1,1n | cut -f2-)"
-    else
-        hosts_table="  (could not parse $latest_fleet)"
-    fi
-fi
+# Host table, worst first, so the eye lands on the failing host.
+hosts_table="$(render_host_table "$latest_fleet" "$failing_hosts")"
+
+# No host names means every action is fleet-level. Which fallback reads right
+# depends on which: a missed check is not the same as config drift.
+fleet_fallback="fleet-level"
+[[ "$missed" -gt 0 ]] && fleet_fallback="check did not run"
+subject="$(render_subject "$action_count" "$failing_hosts" "$fleet_fallback")"
 
 if [[ "$action_count" -eq 0 ]]; then
-    subject="Backups OK — nothing to do"
     headline="NOTHING TO DO."$'\n'
 else
-    short="$(tr ' ' '\n' <<< "$failing_hosts" | grep -v '^$' | sort -u \
-        | head -3 | paste -sd, - | sed 's/,/, /g')"
-    noun="things need"
-    [[ "$action_count" -eq 1 ]] && noun="thing needs"
-    # No host names means every action is fleet-level. Which fallback is right
-    # depends on which: a missed check reads differently from config drift.
-    if [[ -z "$short" ]]; then
-        short="fleet-level"
-        [[ "$missed" -gt 0 ]] && short="check did not run"
-    fi
-    subject="Backups: $action_count $noun you — $short"
     headline="DO THIS ($action_count):
 $actions"
 fi
