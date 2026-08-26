@@ -31,15 +31,6 @@ die_arg() {
     exit 2
 }
 
-is_ssh_error() {
-    local text="$1"
-    [[ "$text" == *"Connection timed out"* \
-    || "$text" == *"Could not resolve hostname"* \
-    || "$text" == *"Connection refused"* \
-    || "$text" == *"No route to host"* \
-    || "$text" == *"Permission denied"* ]]
-}
-
 before_date=""
 RAW=0
 
@@ -89,14 +80,18 @@ render_host_output() {
     local host="$1"
     local success="$2"
     local output="$3"
+    local rc="${4:-}"
 
     if [[ "$RAW" == "1" ]]; then
         return
     fi
 
     if [[ "$success" != "1" ]]; then
-        if is_ssh_error "$output"; then
-            printf "%-8s  [UNREACHABLE] ssh failed\n" "$host"
+        if status_is_unreachable "$rc" "$output"; then
+            # Carry ssh's own reason, which is the difference between "go and
+            # look at the machine" and "the network is fine, something else is
+            # wrong".
+            printf "%-8s  [UNREACHABLE] ssh failed: %s\n" "$host" "$(status_ssh_reason "$output")"
         else
             local first_line="${output%%$'\n'*}"
             printf "%-8s  [ERROR] remote status command failed: %s\n" "$host" "$first_line"
@@ -140,10 +135,11 @@ for i in "${!HOSTS[@]}"; do
         fi
         render_host_output "$host" "1" "$output"
     else
+        host_rc=$?
         if [[ "$RAW" == "1" ]]; then
-            json_hosts+=("$(status_error_json "$host" "$output" | tag_fleet_host "$host")")
+            json_hosts+=("$(status_error_json "$host" "$output" "$host_rc" | tag_fleet_host "$host")")
         fi
-        render_host_output "$host" "0" "$output"
+        render_host_output "$host" "0" "$output" "$host_rc"
     fi
     if [[ "$RAW" != "1" ]]; then
         echo ""

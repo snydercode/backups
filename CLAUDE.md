@@ -211,6 +211,13 @@ look like it had no effect.
 - `ERROR`: could not check (mount missing, etc.)
 - `NEVER_RUN`: backup has never executed
 
+`overall_status` additionally takes `UNREACHABLE`, which no host ever reports
+about itself — collection assigns it when ssh never connected. `bin/status.sh`
+exits 3 for that case and only that case, and `bin/status-all.sh` classifies on
+the exit code rather than on ssh's wording, which varies and, through a
+ProxyJump, names the jump host instead of the target. The gate turns it into
+`DISCONNECTED` and carries ssh's own last line as the detail.
+
 ---
 
 ## Health Check Workflow
@@ -225,7 +232,17 @@ When asked to verify backup health:
 
 Work through these checks **in order** — stop once you find the root cause.
 
-**First, know which runtime the host is on.** A Windows host whose scheduled task
+**Before anything else: is it `DISCONNECTED`?** That finding means ssh never
+connected, so nothing below applies — every check here needs a host that
+answers. Report it as a reachability problem and stop. The detail carries ssh's
+own reason, which is what separates "go and power the machine on" from a name
+that stopped resolving or a key that got rejected. Do not go looking for the
+backup runtime: on a Windows host the runtime probe is the first thing that
+touches the machine, so a host that is simply switched off used to surface here
+as `STATUS_ERROR: could not determine the backup runtime`, which sent triage
+after a backup problem that did not exist.
+
+**Then, know which runtime the host is on.** A Windows host whose scheduled task
 names `backup.ps1` is native; anything else is still WSL. State is in a different
 place for each:
 

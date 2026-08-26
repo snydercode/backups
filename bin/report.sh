@@ -117,7 +117,10 @@ action_desc() {
             printf '%s — last backup exited non-zero' "$host"
             ;;
         DISCONNECTED)
-            printf '%s — unreachable over SSH. Check it is powered on.' "$host"
+            # The detail is ssh's own reason. "Powered off" and "the name stopped
+            # resolving" and "the key was rejected" all land here, and they need
+            # different things done about them.
+            printf '%s — unreachable over SSH. Check it is powered on. (%s)' "$host" "$detail"
             ;;
         JOB_ERROR)
             printf '%s — %s is not readable (mount gone?)' "$host" "$dest"

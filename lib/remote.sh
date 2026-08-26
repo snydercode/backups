@@ -39,15 +39,31 @@ WIN_TASK_NAME="BackupKit"
 # hiccuped schtasks query send status collection to a state file that has not
 # been written since cutover, which reads as a stale host that is in fact fine.
 #
+# A probe that failed because ssh never connected is a different answer again,
+# and it gets its own code. Reporting a powered-off host as "could not determine
+# the backup runtime" describes the symptom this function saw instead of the one
+# the operator has to act on, and it sends the finding down the STATUS_ERROR
+# path rather than DISCONNECTED. ssh exits 255 for its own failures, which is
+# how the two are told apart; the diagnostics go to stderr for the caller to
+# quote, because "unreachable" without the reason is its own dead end.
+#
 # Args: <host> [ssh options...]
-# Returns: 0 native, 1 WSL, 2 probe failed
+# Returns: 0 native, 1 WSL, 2 probe failed on a reachable host,
+#          REMOTE_RUNTIME_SSH_FAILED (3) ssh never connected
+REMOTE_RUNTIME_SSH_FAILED=3
 remote_windows_runtime() {
     local host="$1"
     shift
 
-    local out
-    out="$(ssh "$@" "$host" "schtasks.exe /Query /TN \"$WIN_TASK_NAME\" /V /FO LIST" 2>/dev/null)" \
-        || return 2
+    local out rc
+    out="$(ssh "$@" "$host" "schtasks.exe /Query /TN \"$WIN_TASK_NAME\" /V /FO LIST" 2>&1)"
+    rc=$?
+
+    if [[ "$rc" -ne 0 ]]; then
+        printf '%s\n' "$out" >&2
+        [[ "$rc" -eq 255 ]] && return "$REMOTE_RUNTIME_SSH_FAILED"
+        return 2
+    fi
 
     grep -qi 'backup\.ps1' <<< "$out" && return 0
     return 1
