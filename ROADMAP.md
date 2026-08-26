@@ -1,5 +1,16 @@
 # Roadmap
 
+## Open
+
+- [ ] **ephys3 backup destinations are at 94-95%** (2026-08-26)
+      Both `/mnt/e/data` and `/mnt/f/data` had 1.2 TB free of 21 TB at the last
+      successful run (2026-08-24). Well above the gate's DISK_LOW threshold, so
+      nothing is failing. It only matters because the destinations are
+      append-only: nothing is ever deleted from them, so the number moves one
+      way. ephys3 hasn't recorded since 2026-07-31, which is the only reason
+      this isn't pressing. Decide on more capacity or an archive-off policy
+      before it starts recording again.
+
 ## Open decisions
 
 - [ ] **Keep or revert the generated-jobs.txt pipeline** (2026-08-06)
