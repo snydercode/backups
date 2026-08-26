@@ -9,7 +9,7 @@ help:
 	@echo "  make schedule      # install schedules on all hosts"
 	@echo "  make jobs          # regenerate jobs.txt from the fleet config"
 	@echo "  make check-jobs    # fail if jobs.txt is stale vs the fleet config"
-	@echo "  make test          # run the health-gate fixture tests"
+	@echo "  make test          # run the health-gate and triage-prompt tests"
 	@echo "  make check         # daily health gate, verdict only (no side effects)"
 	@echo "  make report        # weekly report, printed instead of emailed"
 
@@ -30,6 +30,7 @@ check-jobs:
 
 test:
 	bash test/gate-test.sh
+	bash test/prompt-test.sh
 
 check:
 	bash bin/check.sh --check-only
