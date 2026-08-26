@@ -39,8 +39,13 @@ The rest of the fleet is fine. setup2, setup3, setup7 and ephys7 all ran at
 
 Two days of missed 01:00 runs cost nothing while the source is static. What the
 outage does cost is visibility: while ephys3 is unreachable the daily check FAILs
-every morning, and once the Monday due date passes the Todoist task goes overdue.
-That is the alarm working, not a second problem.
+every morning and never touches Todoist.
+
+The "Verify lab backups are up to date" task is overdue, but not because of
+ephys3. It came due 2026-08-24, the gate passed that morning, and `td comment
+add` took an HTTP 502 — which aborts the PASS path before the completion runs.
+See the roadmap item on that ordering. Nothing to do by hand: the first PASS
+after ephys3 returns completes the task and advances the recurrence.
 
 ## Next step
 
