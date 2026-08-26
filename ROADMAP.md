@@ -2,6 +2,20 @@
 
 ## Open
 
+- [ ] **A failed summary comment blocks the task completion behind it** — `bin/check.sh:183-188`
+      (2026-08-26)
+      The PASS path adds the summary comment first and completes the task
+      second, and `automation_problem` exits on the spot. On 2026-08-24 the
+      comment hit an `HTTP 502: Bad Gateway`, so the completion never ran and
+      the dead-man task has been overdue since — on a day the fleet was healthy.
+      The direction is right (never silently OK), but the comment is a
+      convenience and the completion is the contract, so a flaky API on the
+      cosmetic half raises the alarm on the load-bearing half. That is the
+      alarm fatigue check-ack.txt already names as its own silent-failure mode.
+      **Proposed fix:** complete first, then comment; report a failed comment
+      through `automation_problem` without blocking the completion. Wants
+      thought before it lands — it reorders the dead-man contract.
+
 - [ ] **ephys3 backup destinations are at 94-95%** (2026-08-26)
       Both `/mnt/e/data` and `/mnt/f/data` had 1.2 TB free of 21 TB at the last
       successful run (2026-08-24). Well above the gate's DISK_LOW threshold, so
