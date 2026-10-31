@@ -31,6 +31,8 @@ allowed_command() {
         # cmd.exe is the shell on the Windows side of the SSH connection, so a
         # cut-over host's state under C:\ProgramData\backup-kit is unreachable by
         # cat/tail/ls. These are the cmd equivalents.
+        # FIXME: type/dir/Get-Content accept UNC paths (outbound SMB auth), and -Wait or
+        # recursive forms block to the 1800 s triage timeout; reject a leading \\ and -Wait.
         type\ *|dir|dir\ *) return 0 ;;
         # Windows reads that cmd has no verb for. The payload is vetted the same
         # way the WSL wrap below is, and the metacharacter guard already rejects

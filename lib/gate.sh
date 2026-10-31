@@ -65,6 +65,8 @@ gate_evaluate() {
     local expected_jobs_json
     expected_jobs_json="$(
         for host in "${expected_hosts[@]}"; do
+            # FIXME: helper rc is discarded; a malformed jobs.txt silently shrinks the
+            # expected-job set and weakens MISSING_JOB. Emit CONFIG_MISMATCH on failure.
             jobs_emit_host_jobs "$(jobs_emit_host_block "$jobs_file" "$host")" \
                 | jq -R . | jq -sc --arg host "$host" '{($host): .}'
         done | jq -sc 'add // {}'
@@ -160,6 +162,8 @@ gate_evaluate() {
                   # thresholds.
                   $h.jobs[]? | select(.status != "ERROR")
                   | select(.dest_avail_kb != null)
+                  # FIXME: dest_total_kb == 0 makes the threshold 0, so a dead mount reporting
+                  # zeros passes; treat total or avail == 0 as DISK_UNKNOWN.
                   | (if .dest_total_kb != null
                      then ([$min_avail_kb, (.dest_total_kb / 5)] | min)
                      else $min_avail_kb end) as $threshold

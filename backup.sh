@@ -124,9 +124,9 @@ run_plan_one() {
     fi
 
     local output
-    # FIXME: rsync rc unchecked — on failure the stats parse below defaults to
-    # pending 0 with job_status=OK (see ROADMAP "run_plan_one swallows rsync
-    # dry-run failures"). lib/gate.sh defends via src_last_file_epoch.
+    # FIXME: rsync rc unchecked; a failed dry-run parses as pending 0, status OK.
+    # Make a non-zero rc job_status=ERROR with rsync's first stderr line.
+    # lib/gate.sh defends meanwhile via src_last_file_epoch.
     output=$(rsync "${rsync_cmd[@]}" "$src/" "$dest/" 2>&1)
 
     local files bytes
@@ -177,6 +177,8 @@ run_backup_one() {
     echo "Duration: ${duration}s" | tee -a "$LOG_FILE"
     echo "Exit code: $exit_code" | tee -a "$LOG_FILE"
 
+    # FIXME: written per job, so a later clean dest overwrites an earlier failure,
+    # and the gate reads this field. Write once in run_for_all_jobs with the worst rc.
     cat > "$RESULT_FILE" <<EOF
 last_run_epoch=$end_time
 last_run_date="$(date '+%Y-%m-%d %H:%M:%S')"

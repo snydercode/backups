@@ -42,6 +42,8 @@ _action_desc_body() {
     ACTION_CMD=""
     case "$code" in
         DISK_LOW)
+            # FIXME: strips lib/gate.sh's exact DISK_LOW and STALE_IDLE wording, and no test
+            # pins it. Add a render test fed real gate_evaluate output.
             # Keep the size, drop the threshold rationale the gate appends
             # after an em-dash (current format) or in parens (legacy).
             local amount="${detail#*: }"
@@ -90,6 +92,8 @@ _action_desc_body() {
             ACTION_CMD="ssh quintana 'crontab -l | grep backup-kit'"
             printf 'No check ran on %s' "$detail"
             ;;
+        # FIXME: STATUS_ERROR, UNRECOGNIZED_STATUS, UNRECOGNIZED_JOB_STATUS, DISK_UNKNOWN
+        # and MALFORMED_FIELD land here as raw codes; give each an arm.
         *)
             if [[ "$host" == "-" ]]; then
                 printf '%s: %s' "$code" "$detail"

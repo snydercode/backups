@@ -170,6 +170,8 @@ function Get-PendingWork {
     # Summary block, second column is "Copied" — what a real run would move.
     $files = 0
     $bytes = [long]0
+    # FIXME: a count wide enough to merge columns leaves 0 pending with rc 1; treat
+    # (rc -band 1) with a parsed zero as an error.
     if ($output -match '(?m)^\s*Files\s*:\s+\d+\s+(\d+)') { $files = [int]$Matches[1] }
     if ($output -match '(?m)^\s*Bytes\s*:\s+\d+\s+(\d+)') { $bytes = [long]$Matches[1] }
 
@@ -451,6 +453,8 @@ function Set-DestReadOnly {
             $rel = $_.FullName.Substring($destRoot.Length).TrimStart('\')
             $srcInfo = Get-Item -LiteralPath (Join-Path $SrcWin $rel) -Force -ErrorAction SilentlyContinue
 
+            # FIXME: left-writable (size-mismatched) files never reach the status JSON, and
+            # /XO keeps one with a newer mtime from ever being repaired; emit a count and gate on it.
             if ($null -ne $srcInfo -and $srcInfo.Length -ne $_.Length) {
                 $left++
                 Add-Content -LiteralPath $LogFile `
@@ -506,6 +510,8 @@ function Invoke-Run {
         -Value "backup-kit run $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))"
 
     $worst = 0
+    # FIXME: the try wraps the whole loop, so a throw on E: skips F:; move it inside
+    # the loop and name the job in the catch.
     try {
         foreach ($jobLine in (Read-JobLines)) {
             Write-Tee "=== Backup: $($jobLine.Src) -> $($jobLine.Dest) ===" $logFile

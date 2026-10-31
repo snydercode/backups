@@ -125,6 +125,8 @@ schedule_windows() {
     echo "  Verifying..."
     # /V /FO LIST so the logon mode is visible: it must NOT say "Interactive
     # only", or the task is back to needing a logged-in user.
+    # FIXME: the grep passes on "Interactive only" too and fails on non-English
+    # labels; assert the Logon Mode value and fire the task once to check Last Result.
     ssh "$host" "schtasks.exe /Query /TN \"BackupKit\" /V /FO LIST" \
         | grep -Ei "Logon Mode|Run As User|Scheduled Task State" || {
         echo "  ERROR: task not found after install"

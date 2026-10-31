@@ -118,6 +118,8 @@ $findings
 FLEET:
 $fleet"
 
+    # FIXME: unlike check.sh's triage call: no --allowedTools "", stderr discarded,
+    # no log on rc, no injection-defense line, and no timeout -k.
     # </dev/null: the CLI waits on stdin otherwise, and cron has none.
     out="$(timeout "$SUMMARY_TIMEOUT" "$CLAUDE_BIN" -p "$prompt" \
         </dev/null 2>/dev/null)" || return 0

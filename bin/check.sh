@@ -188,6 +188,8 @@ Informational (not failing):
 $(cut -f2- <<< "$info_lines" | sed 's/\t/ /g')"
     fi
 
+    # FIXME: a comment failure exits before the completion, so a flaky API (502,
+    # 2026-08-24) turns a PASS into an overdue task; complete first, then comment.
     if ! "$TD_BIN" comment add "$TODOIST_TASK" --content "$summary" --quiet; then
         automation_problem "td comment add failed"
     fi
